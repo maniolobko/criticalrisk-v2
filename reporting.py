@@ -25,6 +25,16 @@ def decision_recommendation(result):
     return "Decision recommandee: conserver une veille active et formaliser les seuils d'alerte."
 
 
+def risk_level_text(score):
+    if score >= 75:
+        return "Critique"
+    if score >= 55:
+        return "Eleve"
+    if score >= 35:
+        return "Modere"
+    return "Faible"
+
+
 def build_text_report(company, inputs, result):
     lines = [
         "CRITICALRISK INTELLIGENCE",
@@ -161,6 +171,106 @@ def build_pdf(company, inputs, result):
         pdf.set_text_color(96, 108, 124)
         pdf.multi_cell(w - 8, 4, clean(subtitle))
 
+    def simple_table(headers, rows, widths, line_height=6):
+        pdf.set_fill_color(11, 18, 32)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 7)
+        for header, width in zip(headers, widths):
+            pdf.cell(width, line_height, clean(header), border=1, fill=True)
+        pdf.ln(line_height)
+
+        pdf.set_font("Helvetica", "", 7)
+        for row_index, row in enumerate(rows):
+            fill = row_index % 2 == 0
+            pdf.set_fill_color(248, 250, 252 if fill else 255)
+            pdf.set_text_color(35, 45, 60)
+            y_start = pdf.get_y()
+            x_start = pdf.get_x()
+            max_lines = 1
+            for value, width in zip(row, widths):
+                text_width = max(width - 3, 8)
+                approx_chars = max(int(text_width / 1.7), 10)
+                lines = max(1, (len(clean(value)) // approx_chars) + 1)
+                max_lines = max(max_lines, lines)
+            row_height = min(max_lines, 3) * 4.2 + 2
+            for value, width in zip(row, widths):
+                pdf.set_xy(x_start, y_start)
+                pdf.multi_cell(width, 4.2, clean(value), border=1, fill=fill)
+                x_start += width
+            pdf.set_y(y_start + row_height)
+
+    def dimensions_bar_chart(x, y, w, h):
+        pdf.set_xy(x, y)
+        pdf.set_fill_color(248, 250, 252)
+        pdf.set_draw_color(220, 226, 235)
+        pdf.rect(x, y, w, h, "DF")
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(11, 18, 32)
+        pdf.set_xy(x + 4, y + 3)
+        pdf.cell(w - 8, 5, "Graphique des dimensions de risque", ln=True)
+
+        bar_x = x + 48
+        bar_w = w - 60
+        current_y = y + 13
+        for name, score in result.dimensions.items():
+            r, g, b = score_color(score)
+            pdf.set_font("Helvetica", "", 6.8)
+            pdf.set_text_color(60, 70, 85)
+            pdf.set_xy(x + 4, current_y - 1)
+            pdf.cell(42, 4, clean(name[:22]))
+            pdf.set_fill_color(230, 235, 242)
+            pdf.rect(bar_x, current_y, bar_w, 3.4, "F")
+            pdf.set_fill_color(r, g, b)
+            pdf.rect(bar_x, current_y, bar_w * score / 100, 3.4, "F")
+            pdf.set_xy(bar_x + bar_w + 2, current_y - 1)
+            pdf.set_font("Helvetica", "B", 7)
+            pdf.set_text_color(11, 18, 32)
+            pdf.cell(10, 4, f"{score}")
+            current_y += 7
+
+    def risk_matrix(x, y, size):
+        pdf.set_xy(x, y)
+        cell = size / 3
+        zones = [
+            ((226, 245, 235), "Faible"),
+            ((255, 248, 220), "Modere"),
+            ((255, 238, 226), "Eleve"),
+            ((255, 248, 220), "Modere"),
+            ((255, 238, 226), "Eleve"),
+            ((255, 226, 226), "Critique"),
+            ((255, 238, 226), "Eleve"),
+            ((255, 226, 226), "Critique"),
+            ((255, 226, 226), "Critique"),
+        ]
+        idx = 0
+        for row in range(3):
+            for col in range(3):
+                color, label = zones[idx]
+                pdf.set_fill_color(*color)
+                pdf.set_draw_color(220, 226, 235)
+                pdf.rect(x + col * cell, y + row * cell, cell, cell, "DF")
+                pdf.set_font("Helvetica", "", 6)
+                pdf.set_text_color(95, 105, 120)
+                pdf.set_xy(x + col * cell + 2, y + row * cell + 2)
+                pdf.cell(cell - 4, 3, label)
+                idx += 1
+
+        px = x + (result.probability / 100) * size
+        py = y + size - (result.impact / 100) * size
+        pdf.set_fill_color(*score_color(result.global_score))
+        pdf.ellipse(px - 2.2, py - 2.2, 4.4, 4.4, "F")
+        pdf.set_draw_color(11, 18, 32)
+        pdf.rect(x, y, size, size)
+        pdf.set_font("Helvetica", "B", 7)
+        pdf.set_text_color(11, 18, 32)
+        pdf.set_xy(x, y - 7)
+        pdf.cell(size, 5, "Matrice probabilite / impact", align="C")
+        pdf.set_font("Helvetica", "", 6)
+        pdf.set_xy(x, y + size + 2)
+        pdf.cell(size, 4, "Probabilite ->", align="C")
+        pdf.set_xy(x - 10, y + size / 2 - 3)
+        pdf.cell(8, 4, "Impact", align="R")
+
     # Cover page
     pdf.add_page()
     pdf.set_fill_color(7, 16, 29)
@@ -203,21 +313,29 @@ def build_pdf(company, inputs, result):
     # Analysis page
     pdf.add_page()
     section("1. Profil analyse")
-    label_value("Depense annuelle exposee", money(inputs.get("annual_spend", 0)))
-    label_value("CA dependant des flux import critiques", f"{inputs.get('revenue_dependency', 0)}%")
-    label_value("CA dependant des marches export", f"{inputs.get('export_revenue_share', 0)}%")
-    label_value("Fournisseurs qualifies", str(inputs.get("suppliers", 0)))
-    label_value("Part fournisseur principal", f"{inputs.get('single_supplier_share', 0)}%")
-    label_value("Stock tampon", f"{inputs.get('stock_weeks', 0)} semaines")
+    simple_table(
+        ["Indicateur", "Valeur", "Lecture"],
+        [
+            ["Depense annuelle exposee", money(inputs.get("annual_spend", 0)), "Base economique du diagnostic"],
+            ["CA dependant des flux import critiques", f"{inputs.get('revenue_dependency', 0)}%", "Exposition amont"],
+            ["CA dependant des marches export", f"{inputs.get('export_revenue_share', 0)}%", "Exposition aval"],
+            ["Fournisseurs qualifies", str(inputs.get("suppliers", 0)), "Diversification fournisseur"],
+            ["Part fournisseur principal", f"{inputs.get('single_supplier_share', 0)}%", "Risque de concentration"],
+            ["Stock tampon", f"{inputs.get('stock_weeks', 0)} semaines", "Capacite d'absorption court terme"],
+        ],
+        [64, 36, 82],
+    )
 
     section("2. Dimensions de risque")
-    y = pdf.get_y()
-    for idx, (name, score) in enumerate(result.dimensions.items()):
-        x = 14 + (idx % 2) * 92
-        if idx and idx % 2 == 0:
-            y += 24
-        kpi_box(x, y, 86, name.upper(), f"{score}/100", "dimension du modele", score_color(score))
-    pdf.set_y(y + 32)
+    chart_y = pdf.get_y()
+    dimensions_bar_chart(14, chart_y, 116, 62)
+    risk_matrix(140, chart_y + 4, 52)
+    pdf.set_y(chart_y + 70)
+    simple_table(
+        ["Dimension", "Score", "Niveau"],
+        [[name, f"{score}/100", risk_level_text(score)] for name, score in result.dimensions.items()],
+        [82, 30, 70],
+    )
 
     section("3. Causes racines prioritaires")
     for cause in result.root_causes:
@@ -228,15 +346,36 @@ def build_pdf(company, inputs, result):
         pdf.ln(1)
 
     section("4. Lecture economique")
-    label_value("Exposition economique estimee", money(result.exposure_eur))
-    label_value("Cout potentiel de non-action", money(result.non_action_cost))
-    label_value("Cout residuel estime apres actions", money(result.residual_cost))
-    label_value("Gain potentiel estime", money(result.estimated_savings))
-    label_value("Niveau de confiance", confidence_level(result))
+    simple_table(
+        ["Indicateur financier", "Montant / statut", "Interpretation"],
+        [
+            ["Exposition economique estimee", money(result.exposure_eur), "Base exposee au risque import-export"],
+            ["Cout potentiel de non-action", money(result.non_action_cost), "Perte potentielle si aucune action n'est engagee"],
+            ["Cout residuel apres actions", money(result.residual_cost), "Risque restant apres mitigation"],
+            ["Gain potentiel estime", money(result.estimated_savings), "Valeur economique indicative du plan d'action"],
+            ["Niveau de confiance", confidence_level(result), "Qualite indicative des donnees disponibles"],
+        ],
+        [58, 48, 76],
+    )
 
     # Action page
     pdf.add_page()
     section("5. Plan de mitigation priorise")
+    simple_table(
+        ["Priorite", "Horizon", "Action", "Effet", "Valeur"],
+        [
+            [
+                action["priority"],
+                action["horizon"],
+                action["title"],
+                f"-{action['score_effect']} pts",
+                money(action["value_eur"]),
+            ]
+            for action in result.mitigation
+        ],
+        [28, 24, 74, 22, 34],
+    )
+    pdf.ln(4)
     for action in result.mitigation:
         pdf.set_fill_color(248, 250, 252)
         pdf.set_draw_color(220, 226, 235)
@@ -265,6 +404,20 @@ def build_pdf(company, inputs, result):
         pdf.ln(4)
 
     section("6. Scenarios de stress")
+    simple_table(
+        ["Scenario", "Impact", "Cout estime", "Lecture"],
+        [
+            [
+                scenario["name"],
+                f"{scenario['impact_score']}/100",
+                money(scenario["estimated_cost"]),
+                scenario["description"],
+            ]
+            for scenario in result.scenario_impacts
+        ],
+        [48, 22, 36, 76],
+    )
+    pdf.ln(4)
     for scenario in result.scenario_impacts:
         pdf.set_font("Helvetica", "B", 9)
         pdf.set_text_color(11, 18, 32)
