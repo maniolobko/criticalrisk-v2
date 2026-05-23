@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 ECB_DAILY_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+GOOGLE_NEWS_RSS_URL = "https://news.google.com/rss/search"
 STOOQ_QUOTE_URL = "https://stooq.com/q/l/"
 
 MARKET_WATCHLIST = [
@@ -104,7 +105,11 @@ def fetch_gdelt_alerts(max_records=5, timespan="24h"):
         f"{GDELT_DOC_URL}?query={query}"
         f"&mode=ArtList&format=json&maxrecords={max_records}&timespan={timespan}"
     )
-    payload = json.loads(_fetch_text(url, timeout=8))
+    try:
+        payload = json.loads(_fetch_text(url, timeout=2))
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return fetch_google_news_alerts(max_records=max_records, fallback_reason=str(exc))
+
     articles = []
     for article in payload.get("articles", []):
         articles.append({
@@ -119,6 +124,33 @@ def fetch_gdelt_alerts(max_records=5, timespan="24h"):
         "source": "GDELT Project",
         "url": url,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "articles": articles,
+    }
+
+
+def fetch_google_news_alerts(max_records=5, fallback_reason=""):
+    query = quote("supply chain sanctions export controls when:1d")
+    url = f"{GOOGLE_NEWS_RSS_URL}?q={query}&hl=en-US&gl=US&ceid=US:en"
+    xml_text = _fetch_text(url, timeout=6)
+    root = ET.fromstring(xml_text)
+    articles = []
+
+    for item in root.findall("./channel/item")[:max_records]:
+        source = item.find("source")
+        articles.append({
+            "title": item.findtext("title", "Sans titre"),
+            "domain": source.text if source is not None and source.text else "Google News",
+            "country": "",
+            "language": "English",
+            "date": item.findtext("pubDate", ""),
+            "url": item.findtext("link", ""),
+        })
+
+    return {
+        "source": "Google News RSS",
+        "url": url,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fallback_reason": fallback_reason,
         "articles": articles,
     }
 
