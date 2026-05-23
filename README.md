@@ -14,6 +14,7 @@ L'application aide une entreprise a comprendre:
 - le gain potentiel associe aux actions prioritaires;
 - les actions concretes a mener a 30, 60 et 90 jours;
 - les scenarios de stress a presenter a un dirigeant.
+- les signaux publics de marche: devises, matieres, energie et presse risque.
 
 ## Lancement local
 
@@ -39,6 +40,7 @@ L'application ne requiert pas de cle API ni de fichier `secrets.toml`.
 - `app.py`: interface Streamlit.
 - `data.py`: secteurs, matieres, composants et scenarios.
 - `risk_engine.py`: calcul du score, probabilite, impact, cout et recommandations.
+- `market_data.py`: connecteurs publics BCE, Stooq et GDELT.
 - `reporting.py`: export texte et PDF.
 
 ## Ce qui a ete ajoute dans cette iteration
@@ -59,6 +61,7 @@ L'application ne requiert pas de cle API ni de fichier `secrets.toml`.
 - Carte de score par scenario.
 - Radar comparatif multi-scenarios.
 - Matrice probabilite / impact multi-scenarios.
+- Dashboard marche avec sources publiques sans cle API.
 - Rapport texte et PDF base sur le scenario actif enregistre.
 
 ## Prochaine iteration conseillee

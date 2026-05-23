@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data import MATERIAL_RISK, PERSONAS, SECTORS, TRADE_PROFILES
+from market_data import build_market_snapshot, market_pressure_score
 from reporting import build_pdf, build_text_report, money
 from risk_engine import calculate_risk, level_color
 
@@ -554,6 +555,104 @@ def render_metrics(result):
     st.markdown(f"<div class='metric-grid'>{html_items}</div>", unsafe_allow_html=True)
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_market_snapshot():
+    return build_market_snapshot()
+
+
+def render_market_dashboard():
+    col_title, col_action = st.columns([1, .25])
+    with col_title:
+        st.markdown("### Dashboard marche public")
+        st.caption("Donnees publiques chargees a l'ouverture, sans cle API. Les sources et dates sont affichees pour chaque bloc.")
+    with col_action:
+        if st.button("Actualiser", width="stretch"):
+            cached_market_snapshot.clear()
+            st.rerun()
+
+    snapshot = cached_market_snapshot()
+    pressure = market_pressure_score(snapshot)
+    quotes = (snapshot.get("quotes") or {}).get("quotes", [])
+    news = (snapshot.get("news") or {}).get("articles", [])
+    ecb = snapshot.get("ecb") or {}
+
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Pression marche", f"{pressure}/100")
+    metric_cols[1].metric("Cotations chargees", len(quotes))
+    metric_cols[2].metric("Alertes presse 24h", len(news))
+    metric_cols[3].metric("Date BCE", ecb.get("date", "N/D"))
+
+    if snapshot.get("errors"):
+        for error in snapshot["errors"]:
+            st.warning(f"Source indisponible: {error['source']} - {error['error']}")
+
+    st.markdown("#### Prix, devises et matieres")
+    if quotes:
+        quote_rows = []
+        for quote in quotes:
+            quote_rows.append({
+                "Indicateur": quote["label"],
+                "Type": quote["type"],
+                "Dernier": round(quote["close"], 4),
+                "Variation jour": f"{quote['change_pct']:+.2f}%",
+                "Date": quote["date"],
+                "Heure": quote["time"],
+                "Source": "Stooq",
+            })
+        st.dataframe(quote_rows, width="stretch", hide_index=True)
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Bar(
+                x=[quote["label"] for quote in quotes],
+                y=[quote["change_pct"] for quote in quotes],
+                marker_color=["#ef4444" if quote["change_pct"] > 0 else "#22c55e" for quote in quotes],
+                hovertemplate="%{x}<br>Variation: %{y:.2f}%<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            height=320,
+            paper_bgcolor="#111827",
+            plot_bgcolor="#111827",
+            font=dict(color="#f8fafc"),
+            yaxis=dict(title="Variation intrajournaliere (%)", gridcolor="rgba(255,255,255,.09)"),
+            xaxis=dict(gridcolor="rgba(255,255,255,.09)"),
+            margin=dict(l=30, r=20, t=20, b=40),
+        )
+        st.plotly_chart(fig, key="market_quotes_bar", config={"displayModeBar": False, "responsive": True})
+    else:
+        st.info("Aucune cotation marche disponible pour le moment.")
+
+    st.markdown("#### Devises BCE")
+    rates = ecb.get("rates", {})
+    if rates:
+        fx_cols = st.columns(5)
+        for idx, currency in enumerate(["USD", "CNY", "GBP", "CHF", "JPY"]):
+            rate = rates.get(currency)
+            if rate:
+                fx_cols[idx].metric(f"EUR/{currency}", f"{rate:.4f}" if rate < 100 else f"{rate:.2f}")
+    else:
+        st.info("Les taux BCE ne sont pas disponibles pour le moment.")
+
+    st.markdown("#### Alertes commerce international")
+    if news:
+        for article in news:
+            with st.container(border=True):
+                st.markdown(f"**{article['title']}**")
+                st.caption(f"{article['domain']} | {article['country']} | {article['language']} | {article['date']}")
+                if article["url"]:
+                    st.link_button("Ouvrir la source", article["url"])
+    else:
+        st.info("Aucune alerte GDELT disponible sur la fenetre 24h.")
+
+    st.markdown("#### Sources publiques")
+    st.markdown(
+        "- [Banque centrale europeenne - taux de reference](https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html)\n"
+        "- [Stooq - cotations publiques](https://stooq.com)\n"
+        "- [GDELT Project - actualites mondiales](https://www.gdeltproject.org)"
+    )
+
+
 def radar_chart(results, selected_names, key):
     categories = ["Approvisionnement", "Marches export", "Logistique", "Reglementaire", "Prix et devise", "Resilience interne", "Impact"]
     fig = go.Figure()
@@ -778,9 +877,12 @@ def main():
     if not selected_names:
         selected_names = [active_name]
 
-    tab_score, tab_radar, tab_matrix, tab_actions, tab_report = st.tabs(
-        ["Score", "Radar", "Matrice", "Mitigation", "Rapport PDF"]
+    tab_market, tab_score, tab_radar, tab_matrix, tab_actions, tab_report = st.tabs(
+        ["Dashboard marche", "Score", "Radar", "Matrice", "Mitigation", "Rapport PDF"]
     )
+
+    with tab_market:
+        render_market_dashboard()
 
     with tab_score:
         st.markdown("### Comparaison des scenarios")
