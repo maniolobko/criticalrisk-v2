@@ -53,12 +53,19 @@ st.markdown(
     }
     .eyebrow {
         color:var(--accent);
-        font-size:.72rem;
+        font-size:.88rem;
         font-weight:900;
         text-transform:uppercase;
     }
-    .hero h1 { margin:.3rem 0 0; font-size:2rem; line-height:1.12; }
-    .hero p { color:var(--muted); max-width:760px; margin:.65rem 0 0; line-height:1.55; }
+    .brand-title {
+        margin:.25rem 0 .15rem;
+        font-size:3.25rem;
+        line-height:.95;
+        font-weight:950;
+        color:var(--text);
+    }
+    .hero h1 { margin:.3rem 0 0; font-size:1.5rem; line-height:1.18; color:var(--accent) !important; }
+    .hero p { color:var(--muted); max-width:820px; margin:.65rem 0 0; line-height:1.55; }
     .panel, .player-card, .action-card, .cause-card {
         background:linear-gradient(180deg,var(--panel),#0d1626);
         border:1px solid var(--line);
@@ -169,6 +176,7 @@ st.markdown(
     }
     @media (max-width: 900px) {
         .hero { display:block; }
+        .brand-title { font-size:2.25rem; }
         .metric-grid, .cause-grid { grid-template-columns:1fr; }
     }
     </style>
@@ -262,7 +270,8 @@ def render_header():
         <div class="hero">
             <div>
                 <div class="eyebrow">CriticalRisk Intelligence</div>
-                <h1>Simulateur interactif de risques import-export.</h1>
+                <div class="brand-title">CriticalRisk</div>
+                <h1>Intelligence risque import-export.</h1>
                 <p>
                 Creez plusieurs scenarios, comparez les scores, visualisez les indicateurs de commerce international,
                 positionnez chaque scenario sur la matrice probabilite/impact et exportez un rapport PDF.
@@ -577,6 +586,92 @@ def safe_market_load(label, loader):
         return None, f"{label}: {exc}"
 
 
+def pressure_label(score):
+    if score >= 65:
+        return "Elevee"
+    if score >= 35:
+        return "Surveillance"
+    return "Calme"
+
+
+def quote_signal(change_pct):
+    if change_pct >= 1:
+        return "Hausse"
+    if change_pct <= -1:
+        return "Baisse"
+    return "Stable"
+
+
+def render_market_brief(pressure, quotes, news, rates_payload):
+    top_moves = sorted(quotes, key=lambda quote: abs(quote.get("change_pct", 0)), reverse=True)[:3]
+    eur_usd = (rates_payload.get("rates") or {}).get("USD")
+    brief_parts = [
+        f"Pression marche: {pressure_label(pressure).lower()} ({pressure}/100).",
+        f"{len(quotes)} indicateurs prix/devise charges.",
+        f"{len(news)} alertes presse detectees.",
+    ]
+    if top_moves:
+        leader = top_moves[0]
+        brief_parts.append(f"Mouvement principal: {leader['label']} {leader['change_pct']:+.2f}%.")
+    if eur_usd:
+        brief_parts.append(f"EUR/USD BCE: {eur_usd:.4f}.")
+
+    st.markdown(
+        f"""
+        <div class="summary-box">
+            <b>Lecture marche.</b> {" ".join(esc(part) for part in brief_parts)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if top_moves:
+        st.markdown("#### Mouvements prioritaires")
+        move_cols = st.columns(len(top_moves))
+        for idx, quote in enumerate(top_moves):
+            move_cols[idx].metric(
+                quote["label"],
+                f"{quote['close']:.4f}" if quote["close"] < 100 else f"{quote['close']:.2f}",
+                f"{quote['change_pct']:+.2f}%",
+            )
+
+
+def render_market_segments(quotes, rates_payload):
+    segments = [
+        ("Energie", [q for q in quotes if q["type"] == "Energie"]),
+        ("Metaux", [q for q in quotes if q["type"] == "Metaux"]),
+        ("Agricole", [q for q in quotes if q["type"] == "Agricole"]),
+        ("Devises", [q for q in quotes if q["type"] == "Devise"]),
+    ]
+    rows = []
+    for label, items in segments:
+        if items:
+            max_move = max(abs(item["change_pct"]) for item in items)
+            avg_move = sum(item["change_pct"] for item in items) / len(items)
+            alert = "Elevee" if max_move >= 1.5 else "Surveillance" if max_move >= .75 else "Calme"
+            rows.append({
+                "Famille": label,
+                "Alerte": alert,
+                "Variation moyenne": f"{avg_move:+.2f}%",
+                "Mouvement max": f"{max_move:.2f}%",
+            })
+
+    rates = rates_payload.get("rates", {})
+    if rates.get("USD") and rates.get("CNY"):
+        rows.append({
+            "Famille": "EUR/CNY BCE",
+            "Alerte": "Reference",
+            "Variation moyenne": f"{rates['CNY']:.4f}",
+            "Mouvement max": "Taux du jour",
+        })
+
+    st.markdown("#### Niveaux d'alerte par famille")
+    if rows:
+        st.dataframe(rows, width="stretch", hide_index=True)
+    else:
+        st.info("Les niveaux d'alerte seront calcules des que les cotations publiques seront disponibles.")
+
+
 def render_market_dashboard():
     col_title, col_action = st.columns([1, .25])
     with col_title:
@@ -622,6 +717,9 @@ def render_market_dashboard():
         with st.expander("Details des cotations indisponibles"):
             for error in quote_errors:
                 st.write(f"{error['symbol']}: {error['error']}")
+
+    render_market_brief(pressure, quotes, news, rates_payload)
+    render_market_segments(quotes, rates_payload)
 
     st.markdown("#### Prix, devises et matieres")
     if quotes:
