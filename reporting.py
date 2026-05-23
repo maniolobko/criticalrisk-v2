@@ -122,14 +122,14 @@ def build_pdf(company, inputs, result):
         return str(text).replace("’", "'").replace("–", "-").replace("—", "-")
 
     def section(title):
-        pdf.ln(4)
+        pdf.ln(2)
         pdf.set_text_color(11, 18, 32)
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.cell(0, 8, clean(title), ln=True)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 6, clean(title), ln=True)
         pdf.set_draw_color(245, 185, 66)
-        pdf.set_line_width(.6)
+        pdf.set_line_width(.4)
         pdf.line(14, pdf.get_y(), 196, pdf.get_y())
-        pdf.ln(4)
+        pdf.ln(2)
 
     def paragraph(text, size=9, line_height=5):
         pdf.set_text_color(38, 45, 58)
@@ -153,17 +153,17 @@ def build_pdf(company, inputs, result):
             return 212, 160, 65
         return 22, 163, 74
 
-    def kpi_box(x, y, w, title, value, subtitle, color=(11, 18, 32)):
+    def kpi_box(x, y, w, title, value, subtitle, color=(11, 18, 32), h=24):
         pdf.set_xy(x, y)
         pdf.set_fill_color(247, 249, 252)
         pdf.set_draw_color(220, 226, 235)
-        pdf.rect(x, y, w, 28, "DF")
+        pdf.rect(x, y, w, h, "DF")
         pdf.set_xy(x + 4, y + 4)
         pdf.set_font("Helvetica", "B", 7)
         pdf.set_text_color(96, 108, 124)
         pdf.cell(w - 8, 4, clean(title), ln=True)
         pdf.set_x(x + 4)
-        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(*color)
         pdf.cell(w - 8, 8, clean(value), ln=True)
         pdf.set_x(x + 4)
@@ -172,32 +172,43 @@ def build_pdf(company, inputs, result):
         pdf.multi_cell(w - 8, 4, clean(subtitle))
 
     def simple_table(headers, rows, widths, line_height=6):
-        pdf.set_fill_color(11, 18, 32)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 7)
-        for header, width in zip(headers, widths):
-            pdf.cell(width, line_height, clean(header), border=1, fill=True)
-        pdf.ln(line_height)
+        def table_header():
+            pdf.set_x(14)
+            pdf.set_fill_color(11, 18, 32)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "B", 7)
+            for header, width in zip(headers, widths):
+                pdf.cell(width, line_height, clean(header), border=1, fill=True)
+            pdf.ln(line_height)
+            pdf.set_x(14)
+
+        if pdf.get_y() + line_height > 270:
+            pdf.add_page()
+        table_header()
 
         pdf.set_font("Helvetica", "", 7)
         for row_index, row in enumerate(rows):
-            fill = row_index % 2 == 0
-            pdf.set_fill_color(248, 250, 252 if fill else 255)
-            pdf.set_text_color(35, 45, 60)
-            y_start = pdf.get_y()
-            x_start = pdf.get_x()
             max_lines = 1
             for value, width in zip(row, widths):
                 text_width = max(width - 3, 8)
                 approx_chars = max(int(text_width / 1.7), 10)
                 lines = max(1, (len(clean(value)) // approx_chars) + 1)
                 max_lines = max(max_lines, lines)
-            row_height = min(max_lines, 3) * 4.2 + 2
+            row_height = min(max_lines, 2) * 4.0 + 2
+            if pdf.get_y() + row_height > 270:
+                pdf.add_page()
+                table_header()
+
+            fill = row_index % 2 == 0
+            pdf.set_fill_color(248, 250, 252 if fill else 255)
+            pdf.set_text_color(35, 45, 60)
+            y_start = pdf.get_y()
+            x_start = 14
             for value, width in zip(row, widths):
                 pdf.set_xy(x_start, y_start)
-                pdf.multi_cell(width, 4.2, clean(value), border=1, fill=fill)
+                pdf.multi_cell(width, 4.0, clean(value), border=1, fill=fill)
                 x_start += width
-            pdf.set_y(y_start + row_height)
+            pdf.set_xy(14, y_start + row_height)
 
     def dimensions_bar_chart(x, y, w, h):
         pdf.set_xy(x, y)
@@ -274,44 +285,31 @@ def build_pdf(company, inputs, result):
     # Cover page
     pdf.add_page()
     pdf.set_fill_color(7, 16, 29)
-    pdf.rect(0, 0, 210, 72, "F")
+    pdf.rect(0, 0, 210, 46, "F")
     pdf.set_text_color(245, 185, 66)
     pdf.set_font("Helvetica", "B", 11)
-    pdf.set_xy(14, 16)
+    pdf.set_xy(14, 10)
     pdf.cell(0, 7, "CRITICALRISK INTELLIGENCE", ln=True)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 24)
     pdf.set_x(14)
-    pdf.multi_cell(172, 10, "Rapport de diagnostic import-export")
+    pdf.multi_cell(172, 9, "Rapport de diagnostic import-export")
     pdf.set_font("Helvetica", "", 11)
     pdf.set_x(14)
     pdf.multi_cell(172, 6, "Analyse des risques, cout de non-action et plan de mitigation priorise")
 
-    pdf.set_y(88)
-    label_value("Entreprise", company or "Non renseignee")
-    label_value("Profil international", inputs.get("trade_profile", "Non renseigne"))
-    label_value("Secteur", inputs["sector"])
-    label_value("Flux critiques", ", ".join(inputs["materials"]))
-    label_value("Date d'emission", date.today().strftime("%d/%m/%Y"))
+    pdf.set_y(56)
+    kpi_y = 56
+    kpi_box(14, kpi_y, 42, "SCORE ACTUEL", f"{result.global_score}/100", result.level, score_color(result.global_score), h=24)
+    kpi_box(60, kpi_y, 42, "SCORE CIBLE", f"{result.target_score}/100", f"-{result.score_reduction} pts", (22, 163, 74), h=24)
+    kpi_box(106, kpi_y, 42, "COUT NON-ACTION", money(result.non_action_cost), "estimation", (220, 38, 38), h=24)
+    kpi_box(152, kpi_y, 44, "GAIN POTENTIEL", money(result.estimated_savings), "apres actions", (22, 163, 74), h=24)
 
-    kpi_y = 134
-    kpi_box(14, kpi_y, 42, "SCORE ACTUEL", f"{result.global_score}/100", result.level, score_color(result.global_score))
-    kpi_box(60, kpi_y, 42, "SCORE CIBLE", f"{result.target_score}/100", f"-{result.score_reduction} pts", (22, 163, 74))
-    kpi_box(106, kpi_y, 42, "COUT NON-ACTION", money(result.non_action_cost), "estimation", (220, 38, 38))
-    kpi_box(152, kpi_y, 44, "GAIN POTENTIEL", money(result.estimated_savings), "apres actions", (22, 163, 74))
-
-    pdf.set_y(176)
+    pdf.set_y(86)
     section("Synthese decisionnelle")
     paragraph(decision_recommendation(result), size=10, line_height=6)
     paragraph(result.executive_summary, size=10, line_height=6)
 
-    pdf.set_y(250)
-    pdf.set_font("Helvetica", "I", 8)
-    pdf.set_text_color(110, 118, 130)
-    pdf.multi_cell(182, 4, "Document genere automatiquement. Les estimations doivent etre consolidees avec les donnees contractuelles, operationnelles et financieres de l'entreprise.")
-
-    # Analysis page
-    pdf.add_page()
     section("1. Profil analyse")
     simple_table(
         ["Indicateur", "Valeur", "Lecture"],
@@ -358,7 +356,6 @@ def build_pdf(company, inputs, result):
         [58, 48, 76],
     )
 
-    # Action page
     pdf.add_page()
     section("5. Plan de mitigation priorise")
     simple_table(
@@ -375,33 +372,6 @@ def build_pdf(company, inputs, result):
         ],
         [28, 24, 74, 22, 34],
     )
-    pdf.ln(4)
-    for action in result.mitigation:
-        pdf.set_fill_color(248, 250, 252)
-        pdf.set_draw_color(220, 226, 235)
-        x = 14
-        y = pdf.get_y()
-        pdf.rect(x, y, 182, 30, "DF")
-        pdf.set_xy(x + 4, y + 4)
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_text_color(11, 18, 32)
-        pdf.multi_cell(174, 5, clean(f"{action['priority']} | {action['horizon']} | {action['title']}"))
-        pdf.set_x(x + 4)
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(50, 60, 74)
-        pdf.multi_cell(174, 4, clean(action["detail"]))
-        pdf.set_x(x + 4)
-        pdf.set_font("Helvetica", "", 7)
-        pdf.set_text_color(90, 100, 116)
-        pdf.multi_cell(
-            174,
-            4,
-            clean(
-                f"KPI: {action['kpi']} | Effort: {action['effort']} | Impact: {action['impact']} | "
-                f"Effet score: -{action['score_effect']} pts | Valeur estimee: {money(action['value_eur'])}"
-            ),
-        )
-        pdf.ln(4)
 
     section("6. Scenarios de stress")
     simple_table(
@@ -417,16 +387,6 @@ def build_pdf(company, inputs, result):
         ],
         [48, 22, 36, 76],
     )
-    pdf.ln(4)
-    for scenario in result.scenario_impacts:
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_text_color(11, 18, 32)
-        pdf.multi_cell(182, 5, clean(f"{scenario['name']} | Impact {scenario['impact_score']}/100 | Cout {money(scenario['estimated_cost'])}"))
-        paragraph(scenario["description"], size=8)
-        pdf.ln(1)
-
-    # Appendix page
-    pdf.add_page()
     section("7. Donnees a consolider")
     if result.data_gaps:
         for gap in result.data_gaps:
@@ -438,23 +398,27 @@ def build_pdf(company, inputs, result):
     paragraph(
         "Le score CriticalRisk combine plusieurs dimensions: approvisionnement, marches export, logistique, reglementaire, prix/devise et resilience interne. "
         "Chaque dimension est estimee a partir des informations declarees dans le questionnaire et des ponderations internes du modele.",
-        size=9,
+        size=8,
+        line_height=4,
     )
     paragraph(
         "La probabilite mesure la vraisemblance d'un choc ou d'une degradation operationnelle. L'impact mesure la consequence economique et operationnelle potentielle. "
         "Le score global combine ces deux axes afin de prioriser les decisions de mitigation.",
-        size=9,
+        size=8,
+        line_height=4,
     )
 
     section("9. Limites et prochaines etapes")
     paragraph(
         "Ce rapport constitue une aide a la decision. Il ne remplace pas un audit juridique, douanier, financier ou assurantiel. "
         "Les estimations doivent etre confirmees avec contrats, volumes, historique prix, pays fournisseurs, pays clients, incoterms, clauses de paiement et plans de continuite.",
-        size=9,
+        size=8,
+        line_height=4,
     )
     paragraph(
         "Prochaine etape recommandee: consolider les donnees manquantes, valider les hypotheses avec les equipes achats, finance et operations, puis simuler un scenario cible apres mitigation.",
-        size=9,
+        size=8,
+        line_height=4,
     )
 
     buf = io.BytesIO()
