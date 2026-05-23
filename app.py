@@ -578,6 +578,9 @@ def safe_market_load(label, loader):
 
 
 def render_market_dashboard():
+    if "load_gdelt_alerts" not in st.session_state:
+        st.session_state.load_gdelt_alerts = False
+
     col_title, col_action = st.columns([1, .25])
     with col_title:
         st.markdown("### Dashboard marche public")
@@ -591,7 +594,9 @@ def render_market_dashboard():
 
     ecb, ecb_error = safe_market_load("BCE", cached_ecb_rates)
     quotes_payload, quotes_error = safe_market_load("Stooq", cached_market_quotes)
-    news_payload, news_error = safe_market_load("GDELT", cached_gdelt_alerts)
+    news_payload, news_error = None, None
+    if st.session_state.load_gdelt_alerts:
+        news_payload, news_error = safe_market_load("GDELT", cached_gdelt_alerts)
     snapshot = {
         "ecb": ecb,
         "quotes": quotes_payload,
@@ -672,6 +677,14 @@ def render_market_dashboard():
         st.info("Les taux BCE ne sont pas disponibles pour le moment.")
 
     st.markdown("#### Alertes commerce international")
+    alert_cols = st.columns([.32, .68])
+    with alert_cols[0]:
+        if st.button("Charger les alertes GDELT", width="stretch"):
+            st.session_state.load_gdelt_alerts = True
+            st.rerun()
+    with alert_cols[1]:
+        st.caption("Chargement a la demande pour garder l'application rapide. Source publique: GDELT.")
+
     if news:
         for article in news:
             with st.container(border=True):
@@ -679,6 +692,8 @@ def render_market_dashboard():
                 st.caption(f"{article['domain']} | {article['country']} | {article['language']} | {article['date']}")
                 if article["url"]:
                     st.link_button("Ouvrir la source", article["url"])
+    elif not st.session_state.load_gdelt_alerts:
+        st.info("Cliquez sur Charger les alertes GDELT pour afficher les articles recents.")
     else:
         st.info("Aucune alerte GDELT disponible sur la fenetre 24h.")
 

@@ -21,7 +21,7 @@ MARKET_WATCHLIST = [
     {"symbol": "ZW.F", "label": "Ble", "type": "Agricole"},
 ]
 
-RISK_NEWS_QUERY = "(supply chain OR export controls OR sanctions OR customs OR shipping OR commodity prices)"
+RISK_NEWS_QUERY = "(supply chain OR export controls OR sanctions)"
 
 
 def _fetch_text(url, timeout=10):
@@ -98,13 +98,13 @@ def fetch_market_quotes():
     }
 
 
-def fetch_gdelt_alerts(max_records=8, timespan="24h"):
+def fetch_gdelt_alerts(max_records=5, timespan="24h"):
     query = quote(RISK_NEWS_QUERY)
     url = (
         f"{GDELT_DOC_URL}?query={query}"
         f"&mode=ArtList&format=json&maxrecords={max_records}&timespan={timespan}"
     )
-    payload = json.loads(_fetch_text(url, timeout=20))
+    payload = json.loads(_fetch_text(url, timeout=8))
     articles = []
     for article in payload.get("articles", []):
         articles.append({
