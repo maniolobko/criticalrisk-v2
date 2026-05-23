@@ -6,4 +6,4 @@ venv/
 env/
 .env
 .streamlit/secrets.toml
-
+*.zip
