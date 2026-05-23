@@ -52,7 +52,7 @@ MATERIAL_RISK = {
 
 SHOCK_SCENARIOS = {
     "Restriction export Asie": {
-        "description": "Controle export, quotas ou tension diplomatique sur une zone d'approvisionnement.",
+        "description": "Controle export, quotas ou tension diplomatique sur une zone d'achat ou de vente.",
         "affected": ["Semi-conducteurs", "RAM", "PCB", "Terres rares", "Composants machines"],
         "severity": 18,
     },
@@ -73,5 +73,13 @@ PERSONAS = [
     "Direction achats",
     "Direction operations",
     "Importateur / distributeur",
+    "Exportateur",
+    "Importateur et exportateur",
     "Dirigeant non specialiste risque",
+]
+
+TRADE_PROFILES = [
+    "Importateur",
+    "Exportateur",
+    "Importateur et exportateur",
 ]

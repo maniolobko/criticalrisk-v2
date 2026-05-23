@@ -5,7 +5,7 @@ import html
 import plotly.graph_objects as go
 import streamlit as st
 
-from data import MATERIAL_RISK, PERSONAS, SECTORS
+from data import MATERIAL_RISK, PERSONAS, SECTORS, TRADE_PROFILES
 from reporting import build_pdf, build_text_report, money
 from risk_engine import calculate_risk, level_color
 
@@ -185,6 +185,7 @@ def default_scenario(name="Scenario actuel"):
         "scenario_name": name,
         "company": "",
         "persona": PERSONAS[0],
+        "trade_profile": "Importateur et exportateur",
         "sector": "Electronique",
         "materials": ["Semi-conducteurs", "RAM"],
         "suppliers": 1,
@@ -193,6 +194,12 @@ def default_scenario(name="Scenario actuel"):
         "substitution_months": 9,
         "annual_spend": 500000,
         "revenue_dependency": 35,
+        "export_revenue_share": 30,
+        "destination_concentration": 45,
+        "payment_risk": 35,
+        "fx_exposure": 40,
+        "customs_complexity": 45,
+        "sanctions_exposure": 20,
         "risk_maturity": 30,
         "contract_coverage": 35,
         "price_hedging": 20,
@@ -254,9 +261,9 @@ def render_header():
         <div class="hero">
             <div>
                 <div class="eyebrow">CriticalRisk Intelligence</div>
-                <h1>Simulateur interactif de risques fournisseurs.</h1>
+                <h1>Simulateur interactif de risques import-export.</h1>
                 <p>
-                Creez plusieurs scenarios, comparez les scores, visualisez les indicateurs,
+                Creez plusieurs scenarios, comparez les scores, visualisez les indicateurs de commerce international,
                 positionnez chaque scenario sur la matrice probabilite/impact et exportez un rapport PDF.
                 </p>
             </div>
@@ -320,6 +327,14 @@ def scenario_editor(payload):
             edited["scenario_name"] = st.text_input("Nom du scenario", value=edited["scenario_name"])
             edited["company"] = st.text_input("Entreprise", value=edited.get("company", ""))
             edited["persona"] = st.selectbox("Persona", PERSONAS, index=PERSONAS.index(edited["persona"]))
+            trade_profile = edited.get("trade_profile", TRADE_PROFILES[0])
+            if trade_profile not in TRADE_PROFILES:
+                trade_profile = TRADE_PROFILES[0]
+            edited["trade_profile"] = st.selectbox(
+                "Profil international",
+                TRADE_PROFILES,
+                index=TRADE_PROFILES.index(trade_profile),
+            )
         with c2:
             sector_names = list(SECTORS.keys())
             selected_sector = st.selectbox("Secteur", sector_names, index=sector_names.index(edited["sector"]))
@@ -342,10 +357,16 @@ def scenario_editor(payload):
                 value=int(edited["annual_spend"]),
             )
             edited["revenue_dependency"] = st.slider(
-                "CA dependant de ces approvisionnements (%)",
+                "CA dependant des flux import critiques (%)",
                 0,
                 100,
                 int(edited["revenue_dependency"]),
+            )
+            edited["export_revenue_share"] = st.slider(
+                "CA dependant des marches export (%)",
+                0,
+                100,
+                int(edited.get("export_revenue_share", 0)),
             )
 
     with tab_questions:
@@ -414,6 +435,40 @@ def scenario_editor(payload):
                 100,
                 int(edited["incident_history"]),
             )
+        q4, q5, q6 = st.columns(3)
+        with q4:
+            edited["destination_concentration"] = st.slider(
+                "Concentration pays clients export (%)",
+                0,
+                100,
+                int(edited.get("destination_concentration", 0)),
+            )
+            edited["customs_complexity"] = st.slider(
+                "Complexite douane / incoterms (%)",
+                0,
+                100,
+                int(edited.get("customs_complexity", 30)),
+            )
+        with q5:
+            edited["sanctions_exposure"] = st.slider(
+                "Exposition sanctions / export control (%)",
+                0,
+                100,
+                int(edited.get("sanctions_exposure", 15)),
+            )
+            edited["payment_risk"] = st.slider(
+                "Risque paiement client / contrepartie (%)",
+                0,
+                100,
+                int(edited.get("payment_risk", 20)),
+            )
+        with q6:
+            edited["fx_exposure"] = st.slider(
+                "Exposition devise (%)",
+                0,
+                100,
+                int(edited.get("fx_exposure", 25)),
+            )
 
     if st.button("Enregistrer ce scenario", width="stretch"):
         save_active(edited)
@@ -435,11 +490,12 @@ def stat_color(value):
 
 def stat_rows(result):
     return [
-        ("GEO", result.dimensions["Geopolitique"]),
-        ("SUP", result.dimensions["Supply chain"]),
-        ("VOL", result.dimensions["Prix et volatilite"]),
-        ("SUB", result.dimensions["Substituabilite"]),
-        ("MAT", result.dimensions["Maturite risque"]),
+        ("APP", result.dimensions["Approvisionnement"]),
+        ("EXP", result.dimensions["Marches export"]),
+        ("LOG", result.dimensions["Logistique"]),
+        ("REG", result.dimensions["Reglementaire"]),
+        ("FX", result.dimensions["Prix et devise"]),
+        ("RES", result.dimensions["Resilience interne"]),
         ("IMP", result.impact),
     ]
 
@@ -499,7 +555,7 @@ def render_metrics(result):
 
 
 def radar_chart(results, selected_names, key):
-    categories = ["Geopolitique", "Supply chain", "Prix et volatilite", "Substituabilite", "Maturite risque", "Impact"]
+    categories = ["Approvisionnement", "Marches export", "Logistique", "Reglementaire", "Prix et devise", "Resilience interne", "Impact"]
     fig = go.Figure()
     for name in selected_names:
         result = results[name]

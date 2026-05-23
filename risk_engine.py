@@ -55,12 +55,19 @@ def average(values):
 def calculate_risk(inputs):
     sector = inputs["sector"]
     materials = inputs["materials"]
+    trade_profile = inputs.get("trade_profile", "Importateur")
     suppliers = inputs["suppliers"]
     single_supplier_share = inputs["single_supplier_share"]
     stock_weeks = inputs["stock_weeks"]
     substitution_months = inputs["substitution_months"]
     annual_spend = inputs["annual_spend"]
     revenue_dependency = inputs["revenue_dependency"]
+    export_revenue_share = inputs.get("export_revenue_share", 0)
+    destination_concentration = inputs.get("destination_concentration", 0)
+    payment_risk = inputs.get("payment_risk", 20)
+    fx_exposure = inputs.get("fx_exposure", 25)
+    customs_complexity = inputs.get("customs_complexity", 30)
+    sanctions_exposure = inputs.get("sanctions_exposure", 15)
     risk_maturity = inputs["risk_maturity"]
     contract_coverage = inputs.get("contract_coverage", 35)
     price_hedging = inputs.get("price_hedging", 20)
@@ -92,30 +99,45 @@ def calculate_risk(inputs):
     logistics_risk_reducer = logistics_diversity * 0.18
     incident_penalty = incident_history * 0.16
     revenue_risk = clamp(revenue_dependency)
+    export_dependency_risk = clamp(export_revenue_share)
+    destination_risk = clamp((destination_concentration * 0.48) + (customs_complexity * 0.24) + (sanctions_exposure * 0.28))
+    payment_fx_risk = clamp((payment_risk * 0.45) + (fx_exposure * 0.40) + (export_dependency_risk * 0.15) - hedge_risk_reducer)
+
+    normalized_trade_profile = trade_profile.lower()
+    is_importer = "importateur" in normalized_trade_profile
+    is_exporter = "exportateur" in normalized_trade_profile
+    import_weight = 1 if is_importer else 0.35
+    export_weight = 1 if is_exporter else 0.25
 
     dimensions = {
-        "Geopolitique": clamp((concentration * 0.7) + (sector_baseline * 0.3)),
-        "Supply chain": clamp((supplier_risk * 0.42) + (dependency_risk * 0.32) + (stock_risk * 0.18) - logistics_risk_reducer + incident_penalty),
-        "Prix et volatilite": clamp((volatility * 0.62) + (revenue_risk * 0.32) - hedge_risk_reducer - contract_risk_reducer + incident_penalty),
-        "Substituabilite": clamp((substitutability * 0.55) + (substitution_risk * 0.45)),
-        "Maturite risque": maturity_risk,
+        "Approvisionnement": clamp(((supplier_risk * 0.40) + (dependency_risk * 0.30) + (stock_risk * 0.18) + (concentration * 0.12) - logistics_risk_reducer + incident_penalty) * import_weight),
+        "Marches export": clamp(((destination_risk * 0.52) + (export_dependency_risk * 0.34) + (sector_baseline * 0.14)) * export_weight),
+        "Logistique": clamp((stock_risk * 0.30) + (customs_complexity * 0.28) + ((100 - logistics_diversity) * 0.30) + (incident_history * 0.12)),
+        "Reglementaire": clamp((sanctions_exposure * 0.48) + (customs_complexity * 0.32) + (destination_concentration * 0.20)),
+        "Prix et devise": clamp((volatility * 0.34) + (payment_fx_risk * 0.34) + (revenue_risk * 0.16) + (export_dependency_risk * 0.16) - contract_risk_reducer),
+        "Resilience interne": maturity_risk,
     }
 
     probability = clamp(
-        dimensions["Geopolitique"] * 0.30
-        + dimensions["Supply chain"] * 0.35
-        + dimensions["Prix et volatilite"] * 0.20
-        + dimensions["Maturite risque"] * 0.15
+        dimensions["Approvisionnement"] * 0.22
+        + dimensions["Marches export"] * 0.18
+        + dimensions["Logistique"] * 0.18
+        + dimensions["Reglementaire"] * 0.17
+        + dimensions["Prix et devise"] * 0.15
+        + dimensions["Resilience interne"] * 0.10
     )
     impact = clamp(
-        dimensions["Supply chain"] * 0.25
-        + dimensions["Prix et volatilite"] * 0.25
-        + dimensions["Substituabilite"] * 0.25
-        + revenue_risk * 0.25
+        dimensions["Approvisionnement"] * 0.20
+        + dimensions["Marches export"] * 0.20
+        + dimensions["Reglementaire"] * 0.16
+        + dimensions["Prix et devise"] * 0.18
+        + substitution_risk * 0.12
+        + max(revenue_risk, export_dependency_risk) * 0.14
     )
     global_score = clamp((probability * 0.52) + (impact * 0.48))
 
-    exposure_eur = int(annual_spend * revenue_dependency / 100)
+    exposure_rate = max(revenue_dependency, export_revenue_share)
+    exposure_eur = int(annual_spend * exposure_rate / 100)
     non_action_cost = int(exposure_eur * (global_score / 100) * 0.55)
 
     root_causes = build_root_causes(dimensions, inputs, materials)
@@ -153,31 +175,37 @@ def build_root_causes(dimensions, inputs, materials):
     ranked = sorted(dimensions.items(), key=lambda item: item[1], reverse=True)
 
     for name, value in ranked[:3]:
-        if name == "Supply chain":
+        if name == "Approvisionnement":
             causes.append({
                 "title": "Dependance fournisseur concentree",
                 "detail": f"{inputs['suppliers']} fournisseur(s) qualifie(s), avec {inputs['single_supplier_share']}% du besoin porte par le principal fournisseur.",
                 "severity": value,
             })
-        elif name == "Geopolitique":
+        elif name == "Marches export":
             causes.append({
-                "title": "Exposition geographique et industrielle elevee",
-                "detail": f"Les composants/matieres selectionnes ({', '.join(materials)}) sont exposes a des zones ou procedes concentres.",
+                "title": "Dependance a certains marches de destination",
+                "detail": f"{inputs.get('export_revenue_share', 0)}% du chiffre d'affaires depend de l'export, avec une concentration destination estimee a {inputs.get('destination_concentration', 0)}%.",
                 "severity": value,
             })
-        elif name == "Prix et volatilite":
+        elif name == "Reglementaire":
             causes.append({
-                "title": "Volatilite prix et effet marge",
-                "detail": f"{inputs['revenue_dependency']}% du chiffre d'affaires depend directement de ces approvisionnements.",
+                "title": "Risque reglementaire et douanier",
+                "detail": f"Complexite douaniere {inputs.get('customs_complexity', 0)}%, exposition sanctions/export control {inputs.get('sanctions_exposure', 0)}%.",
                 "severity": value,
             })
-        elif name == "Substituabilite":
+        elif name == "Prix et devise":
             causes.append({
-                "title": "Substitution lente",
-                "detail": f"Le delai estime de substitution ou requalification est de {inputs['substitution_months']} mois.",
+                "title": "Volatilite prix, devise et paiement",
+                "detail": f"Exposition devise {inputs.get('fx_exposure', 0)}%, risque d'impaye ou retard paiement {inputs.get('payment_risk', 0)}%.",
                 "severity": value,
             })
-        elif name == "Maturite risque":
+        elif name == "Logistique":
+            causes.append({
+                "title": "Fragilite logistique internationale",
+                "detail": f"Diversite logistique {inputs.get('logistics_diversity', 0)}%, stock tampon {inputs['stock_weeks']} semaines.",
+                "severity": value,
+            })
+        elif name == "Resilience interne":
             causes.append({
                 "title": "Pilotage risque insuffisant",
                 "detail": f"Maturite declaree: {inputs['risk_maturity']}%. La veille, les seuils d'alerte ou les plans de crise semblent incomplets.",
@@ -189,12 +217,16 @@ def build_root_causes(dimensions, inputs, materials):
 
 def build_data_gaps(inputs, dimensions):
     gaps = []
-    if dimensions["Supply chain"] >= 55:
+    if dimensions["Approvisionnement"] >= 55:
         gaps.append("Pays exacts des fournisseurs de rang 1 et 2")
         gaps.append("Delais reels de livraison par fournisseur et route logistique")
-    if dimensions["Prix et volatilite"] >= 55:
-        gaps.append("Historique prix, volumes achetes et clauses d'indexation")
-    if dimensions["Substituabilite"] >= 55:
+    if dimensions["Marches export"] >= 55:
+        gaps.append("Repartition du chiffre d'affaires par pays client et devise de facturation")
+    if dimensions["Reglementaire"] >= 55:
+        gaps.append("Incoterms, codes douaniers, licences, sanctions et restrictions export applicables")
+    if dimensions["Prix et devise"] >= 55:
+        gaps.append("Historique prix, volumes achetes/vendus, clauses d'indexation et couverture devise")
+    if inputs["substitution_months"] >= 6:
         gaps.append("Liste des composants substituables et delais de requalification")
     if inputs["risk_maturity"] < 50:
         gaps.append("Responsable interne, seuils d'alerte et protocole de decision")
@@ -212,7 +244,7 @@ def build_executive_summary(inputs, score, target_score, non_action_cost):
         tone = "Le risque actuel parait limite, sous reserve de maintenir une veille active."
 
     return (
-        f"{tone} Pour le profil {inputs['persona']}, le score peut passer de "
+        f"{tone} Pour le profil {inputs['persona']} ({inputs.get('trade_profile', 'Importateur')}), le score peut passer de "
         f"{score}/100 a environ {target_score}/100 si les actions prioritaires sont mises en oeuvre. "
         f"Le cout potentiel de non-action est estime a {non_action_cost:,} EUR."
     ).replace(",", " ")
@@ -221,7 +253,7 @@ def build_executive_summary(inputs, score, target_score, non_action_cost):
 def build_mitigation(dimensions, inputs, score, non_action_cost):
     actions = []
 
-    if dimensions["Supply chain"] >= 55:
+    if dimensions["Approvisionnement"] >= 55:
         actions.append({
             "horizon": "30 jours",
             "priority": "Priorite 1",
@@ -245,7 +277,7 @@ def build_mitigation(dimensions, inputs, score, non_action_cost):
             "value_eur": int(non_action_cost * 0.20),
         })
 
-    if dimensions["Substituabilite"] >= 55:
+    if inputs["substitution_months"] >= 6:
         actions.append({
             "horizon": "90 jours",
             "priority": "Priorite 3",
@@ -271,7 +303,46 @@ def build_mitigation(dimensions, inputs, score, non_action_cost):
             "value_eur": int(non_action_cost * 0.10),
         })
 
-    if dimensions["Maturite risque"] >= 55:
+    if dimensions["Marches export"] >= 55:
+        actions.append({
+            "horizon": "30 jours",
+            "priority": "Export",
+            "title": "Segmenter les marches de destination critiques",
+            "detail": "Identifier les pays clients les plus exposes, les alternatives commerciales et les seuils de concentration acceptables.",
+            "kpi": "Top pays clients classes par risque",
+            "effort": "Moyen",
+            "impact": "Fort",
+            "score_effect": 6,
+            "value_eur": int(non_action_cost * 0.12),
+        })
+
+    if dimensions["Reglementaire"] >= 55:
+        actions.append({
+            "horizon": "60 jours",
+            "priority": "Conformite",
+            "title": "Auditer les contraintes douanieres et export control",
+            "detail": "Verifier codes douaniers, licences, sanctions, restrictions pays et clauses contractuelles sur les flux sensibles.",
+            "kpi": "100% des flux critiques qualifies",
+            "effort": "Moyen",
+            "impact": "Fort",
+            "score_effect": 7,
+            "value_eur": int(non_action_cost * 0.16),
+        })
+
+    if dimensions["Prix et devise"] >= 55:
+        actions.append({
+            "horizon": "60 jours",
+            "priority": "Finance",
+            "title": "Reduire l'exposition devise et paiement",
+            "detail": "Revoir clauses d'indexation, couverture devise, assurance-credit et conditions de paiement sur les flux internationaux.",
+            "kpi": "Plan couverture prix/devise valide",
+            "effort": "Moyen",
+            "impact": "Moyen",
+            "score_effect": 5,
+            "value_eur": int(non_action_cost * 0.10),
+        })
+
+    if dimensions["Resilience interne"] >= 55:
         actions.append({
             "horizon": "60 jours",
             "priority": "Gouvernance",

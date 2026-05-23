@@ -12,8 +12,9 @@ def build_text_report(company, inputs, result):
         f"Date: {date.today().strftime('%d/%m/%Y')}",
         "",
         f"Entreprise: {company or 'Non renseignee'}",
+        f"Profil international: {inputs.get('trade_profile', 'Non renseigne')}",
         f"Secteur: {inputs['sector']}",
-        f"Matieres / composants critiques: {', '.join(inputs['materials'])}",
+        f"Flux, matieres ou composants critiques: {', '.join(inputs['materials'])}",
         "",
         f"Score global: {result.global_score}/100",
         f"Score cible apres mitigation: {result.target_score}/100",
@@ -81,7 +82,7 @@ def build_pdf(company, inputs, result):
     pdf.set_font("Helvetica", "B", 16)
     pdf.cell(0, 14, "CriticalRisk Intelligence", ln=True)
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 5, "Diagnostic et mitigation des risques d'approvisionnement", ln=True)
+    pdf.cell(0, 5, "Diagnostic et mitigation des risques de commerce international", ln=True)
 
     pdf.ln(12)
     pdf.set_text_color(20, 24, 36)
@@ -90,8 +91,9 @@ def build_pdf(company, inputs, result):
 
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 7, f"Entreprise: {company or 'Non renseignee'}", ln=True)
+    pdf.cell(0, 7, f"Profil international: {inputs.get('trade_profile', 'Non renseigne')}", ln=True)
     pdf.cell(0, 7, f"Secteur: {inputs['sector']}", ln=True)
-    pdf.multi_cell(0, 7, f"Matieres / composants: {', '.join(inputs['materials'])}")
+    pdf.multi_cell(0, 7, f"Flux, matieres ou composants critiques: {', '.join(inputs['materials'])}")
 
     pdf.ln(4)
     pdf.set_font("Helvetica", "B", 24)

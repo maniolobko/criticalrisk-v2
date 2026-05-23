@@ -1,12 +1,12 @@
 # CriticalRisk Intelligence V2
 
-Prototype Streamlit reconstruit depuis zero pour passer d'un simple score de risque a un outil de mitigation actionnable.
+Prototype Streamlit reconstruit depuis zero pour passer d'un simple score de risque a un outil de mitigation actionnable pour importateurs et exportateurs.
 
 ## Objectif
 
 L'application aide une entreprise a comprendre:
 
-- son exposition aux risques d'approvisionnement critiques;
+- son exposition aux risques critiques d'import-export;
 - la probabilite et l'impact d'un choc;
 - le cout potentiel de non-action;
 - les causes racines du risque;
@@ -55,7 +55,7 @@ L'application ne requiert pas de cle API ni de fichier `secrets.toml`.
 - Gestion de plusieurs scenarios.
 - Creation, duplication, suppression et enregistrement de scenarios.
 - Profil entreprise editable.
-- Questionnaire complet: fournisseurs, stock, substitution, contrats, couverture prix, logistique, veille, incidents.
+- Questionnaire complet: fournisseurs, stock, substitution, contrats, couverture prix, logistique, veille, incidents, marches export, douane, sanctions, devise et paiement.
 - Carte de score par scenario.
 - Radar comparatif multi-scenarios.
 - Matrice probabilite / impact multi-scenarios.
@@ -65,9 +65,11 @@ L'application ne requiert pas de cle API ni de fichier `secrets.toml`.
 
 Remplacer progressivement les donnees de demonstration par une base de connaissances sourcable:
 
-- pays producteurs;
+- pays producteurs et pays clients;
 - concentration fournisseur;
+- concentration marche export;
 - routes logistiques;
+- exposition douane, sanctions, devise et paiement;
 - historiques de chocs;
 - delais de requalification;
 - cas comparables;
