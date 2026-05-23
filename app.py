@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data import MATERIAL_RISK, PERSONAS, SECTORS, TRADE_PROFILES
-from market_data import build_market_snapshot, market_pressure_score
+from market_data import fetch_ecb_rates, fetch_gdelt_alerts, fetch_market_quotes, market_pressure_score
 from reporting import build_pdf, build_text_report, money
 from risk_engine import calculate_risk, level_color
 
@@ -555,9 +555,26 @@ def render_metrics(result):
     st.markdown(f"<div class='metric-grid'>{html_items}</div>", unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=900, show_spinner=False)
-def cached_market_snapshot():
-    return build_market_snapshot()
+@st.cache_data(ttl=900, show_spinner="Chargement des taux BCE...")
+def cached_ecb_rates():
+    return fetch_ecb_rates()
+
+
+@st.cache_data(ttl=900, show_spinner="Chargement des cotations publiques...")
+def cached_market_quotes():
+    return fetch_market_quotes()
+
+
+@st.cache_data(ttl=900, show_spinner="Chargement des alertes GDELT...")
+def cached_gdelt_alerts():
+    return fetch_gdelt_alerts()
+
+
+def safe_market_load(label, loader):
+    try:
+        return loader(), None
+    except Exception as exc:
+        return None, f"{label}: {exc}"
 
 
 def render_market_dashboard():
@@ -567,24 +584,44 @@ def render_market_dashboard():
         st.caption("Donnees publiques chargees a l'ouverture, sans cle API. Les sources et dates sont affichees pour chaque bloc.")
     with col_action:
         if st.button("Actualiser", width="stretch"):
-            cached_market_snapshot.clear()
+            cached_ecb_rates.clear()
+            cached_market_quotes.clear()
+            cached_gdelt_alerts.clear()
             st.rerun()
 
-    snapshot = cached_market_snapshot()
+    ecb, ecb_error = safe_market_load("BCE", cached_ecb_rates)
+    quotes_payload, quotes_error = safe_market_load("Stooq", cached_market_quotes)
+    news_payload, news_error = safe_market_load("GDELT", cached_gdelt_alerts)
+    snapshot = {
+        "ecb": ecb,
+        "quotes": quotes_payload,
+        "news": news_payload,
+        "errors": [
+            {"source": "ecb", "error": ecb_error} if ecb_error else None,
+            {"source": "quotes", "error": quotes_error} if quotes_error else None,
+            {"source": "news", "error": news_error} if news_error else None,
+        ],
+    }
+    snapshot["errors"] = [error for error in snapshot["errors"] if error]
     pressure = market_pressure_score(snapshot)
-    quotes = (snapshot.get("quotes") or {}).get("quotes", [])
-    news = (snapshot.get("news") or {}).get("articles", [])
-    ecb = snapshot.get("ecb") or {}
+    quotes = (quotes_payload or {}).get("quotes", [])
+    quote_errors = (quotes_payload or {}).get("errors", [])
+    news = (news_payload or {}).get("articles", [])
+    rates_payload = ecb or {}
 
     metric_cols = st.columns(4)
     metric_cols[0].metric("Pression marche", f"{pressure}/100")
     metric_cols[1].metric("Cotations chargees", len(quotes))
     metric_cols[2].metric("Alertes presse 24h", len(news))
-    metric_cols[3].metric("Date BCE", ecb.get("date", "N/D"))
+    metric_cols[3].metric("Date BCE", rates_payload.get("date", "N/D"))
 
     if snapshot.get("errors"):
         for error in snapshot["errors"]:
             st.warning(f"Source indisponible: {error['source']} - {error['error']}")
+    if quote_errors:
+        with st.expander("Details des cotations indisponibles"):
+            for error in quote_errors:
+                st.write(f"{error['symbol']}: {error['error']}")
 
     st.markdown("#### Prix, devises et matieres")
     if quotes:
@@ -624,7 +661,7 @@ def render_market_dashboard():
         st.info("Aucune cotation marche disponible pour le moment.")
 
     st.markdown("#### Devises BCE")
-    rates = ecb.get("rates", {})
+    rates = rates_payload.get("rates", {})
     if rates:
         fx_cols = st.columns(5)
         for idx, currency in enumerate(["USD", "CNY", "GBP", "CHF", "JPY"]):

@@ -1,6 +1,5 @@
 [server]
 headless = true
-enableCORS = false
 enableXsrfProtection = true
 
 [browser]
@@ -12,4 +11,3 @@ primaryColor = "#f5b942"
 backgroundColor = "#07101d"
 secondaryBackgroundColor = "#111827"
 textColor = "#f8fafc"
-
