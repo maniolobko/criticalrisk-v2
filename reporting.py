@@ -1,4 +1,5 @@
 from datetime import date
+import html
 import io
 
 
@@ -148,351 +149,364 @@ def build_text_report(company, inputs, result):
 
 def build_pdf(company, inputs, result):
     try:
-        from fpdf import FPDF
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import cm
+        from reportlab.platypus import (
+            BaseDocTemplate,
+            Frame,
+            PageBreak,
+            PageTemplate,
+            Paragraph,
+            Spacer,
+            Table,
+            TableStyle,
+            KeepTogether,
+            Flowable,
+        )
     except ImportError:
         return None
-
-    class ReportPDF(FPDF):
-        def footer(self):
-            self.set_y(-12)
-            self.set_font("Helvetica", "", 8)
-            self.set_text_color(110, 118, 130)
-            self.cell(0, 8, f"CriticalRisk Intelligence | Rapport confidentiel | Page {self.page_no()}", align="C")
-
-    pdf = ReportPDF()
-    pdf.set_auto_page_break(auto=True, margin=16)
-    pdf.set_left_margin(14)
-    pdf.set_right_margin(14)
 
     def clean(text):
         return str(text).replace("’", "'").replace("–", "-").replace("—", "-")
 
-    def section(title):
-        pdf.ln(2)
-        pdf.set_x(14)
-        pdf.set_text_color(11, 18, 32)
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 6, clean(title), ln=True)
-        pdf.set_draw_color(245, 185, 66)
-        pdf.set_line_width(.4)
-        pdf.line(14, pdf.get_y(), 196, pdf.get_y())
-        pdf.ln(2)
+    def esc(text):
+        return html.escape(clean(text))
 
-    def paragraph(text, size=9, line_height=5):
-        pdf.set_x(14)
-        pdf.set_text_color(38, 45, 58)
-        pdf.set_font("Helvetica", "", size)
-        pdf.multi_cell(182, line_height, clean(text))
-
-    def label_value(label, value, width=60):
-        pdf.set_x(14)
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_text_color(85, 95, 110)
-        pdf.cell(width, 5, clean(label), ln=False)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(20, 24, 36)
-        pdf.multi_cell(182 - width, 5, clean(value))
-
-    def score_color(score):
+    def color_for_score(score):
         if score >= 75:
-            return 220, 38, 38
+            return colors.HexColor("#dc2626")
         if score >= 55:
-            return 234, 88, 12
+            return colors.HexColor("#ea580c")
         if score >= 35:
-            return 212, 160, 65
-        return 22, 163, 74
+            return colors.HexColor("#d4a041")
+        return colors.HexColor("#16a34a")
 
-    def kpi_box(x, y, w, title, value, subtitle, color=(11, 18, 32), h=24):
-        pdf.set_xy(x, y)
-        pdf.set_fill_color(247, 249, 252)
-        pdf.set_draw_color(220, 226, 235)
-        pdf.rect(x, y, w, h, "DF")
-        pdf.set_xy(x + 4, y + 4)
-        pdf.set_font("Helvetica", "B", 7)
-        pdf.set_text_color(96, 108, 124)
-        pdf.cell(w - 8, 4, clean(title), ln=True)
-        pdf.set_x(x + 4)
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(*color)
-        pdf.cell(w - 8, 8, clean(value), ln=True)
-        pdf.set_x(x + 4)
-        pdf.set_font("Helvetica", "", 7)
-        pdf.set_text_color(96, 108, 124)
-        pdf.multi_cell(w - 8, 4, clean(subtitle))
+    class RiskBars(Flowable):
+        def __init__(self, dimensions, width=16.2 * cm, height=6.0 * cm):
+            super().__init__()
+            self.dimensions = list(dimensions.items())
+            self.width = width
+            self.height = height
 
-    def simple_table(headers, rows, widths, line_height=5):
-        def table_header():
-            pdf.set_x(14)
-            pdf.set_fill_color(11, 18, 32)
-            pdf.set_text_color(255, 255, 255)
-            pdf.set_font("Helvetica", "B", 7)
-            for header, width in zip(headers, widths):
-                pdf.cell(width, line_height, clean(header), border=1, fill=True)
-            pdf.ln(line_height)
-            pdf.set_x(14)
+        def draw(self):
+            c = self.canv
+            c.setStrokeColor(colors.HexColor("#dce3ee"))
+            c.setFillColor(colors.HexColor("#f8fafc"))
+            c.rect(0, 0, self.width, self.height, stroke=1, fill=1)
+            c.setFillColor(colors.HexColor("#0b1220"))
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(10, self.height - 16, "Graphique des dimensions de risque")
+            y = self.height - 35
+            label_w = 105
+            bar_w = self.width - label_w - 50
+            for name, score in self.dimensions:
+                c.setFont("Helvetica", 7.2)
+                c.setFillColor(colors.HexColor("#334155"))
+                c.drawString(10, y, clean(name)[:28])
+                c.setFillColor(colors.HexColor("#e5eaf2"))
+                c.rect(label_w, y - 1, bar_w, 6, stroke=0, fill=1)
+                c.setFillColor(color_for_score(score))
+                c.rect(label_w, y - 1, bar_w * score / 100, 6, stroke=0, fill=1)
+                c.setFillColor(colors.HexColor("#0b1220"))
+                c.setFont("Helvetica-Bold", 7.2)
+                c.drawRightString(self.width - 10, y, f"{score}/100")
+                y -= 18
 
-        if pdf.get_y() + line_height > 270:
-            pdf.add_page()
-        table_header()
+    class RiskMatrix(Flowable):
+        def __init__(self, probability, impact, score, width=7.0 * cm, height=6.4 * cm):
+            super().__init__()
+            self.probability = probability
+            self.impact = impact
+            self.score = score
+            self.width = width
+            self.height = height
 
-        pdf.set_font("Helvetica", "", 7)
-        for row_index, row in enumerate(rows):
-            row_height = 5
-            if pdf.get_y() + row_height > 270:
-                pdf.add_page()
-                table_header()
+        def draw(self):
+            c = self.canv
+            size = 4.8 * cm
+            x = (self.width - size) / 2
+            y = 16
+            c.setFillColor(colors.HexColor("#0b1220"))
+            c.setFont("Helvetica-Bold", 9)
+            c.drawCentredString(self.width / 2, self.height - 12, "Matrice probabilite / impact")
+            labels = [
+                ("Faible", "#e3f4ea"), ("Modere", "#fff6d8"), ("Eleve", "#ffeadb"),
+                ("Modere", "#fff6d8"), ("Eleve", "#ffeadb"), ("Critique", "#ffe0e0"),
+                ("Eleve", "#ffeadb"), ("Critique", "#ffe0e0"), ("Critique", "#ffe0e0"),
+            ]
+            cell = size / 3
+            idx = 0
+            for row in range(3):
+                for col in range(3):
+                    label, fill = labels[idx]
+                    c.setFillColor(colors.HexColor(fill))
+                    c.setStrokeColor(colors.HexColor("#dce3ee"))
+                    c.rect(x + col * cell, y + (2 - row) * cell, cell, cell, stroke=1, fill=1)
+                    c.setFillColor(colors.HexColor("#64748b"))
+                    c.setFont("Helvetica", 6)
+                    c.drawString(x + col * cell + 4, y + (2 - row) * cell + cell - 10, label)
+                    idx += 1
+            px = x + (self.probability / 100) * size
+            py = y + (self.impact / 100) * size
+            c.setFillColor(color_for_score(self.score))
+            c.circle(px, py, 4, stroke=0, fill=1)
+            c.setFillColor(colors.HexColor("#0b1220"))
+            c.setFont("Helvetica", 6)
+            c.drawCentredString(x + size / 2, y - 10, "Probabilite")
+            c.saveState()
+            c.translate(x - 12, y + size / 2)
+            c.rotate(90)
+            c.drawCentredString(0, 0, "Impact")
+            c.restoreState()
 
-            fill = row_index % 2 == 0
-            pdf.set_fill_color(248, 250, 252 if fill else 255)
-            pdf.set_text_color(35, 45, 60)
-            for value, width in zip(row, widths):
-                max_chars = max(int((width - 2) / 1.45), 8)
-                pdf.cell(width, row_height, clean(truncate(value, max_chars)), border=1, fill=fill)
-            pdf.ln(row_height)
-            pdf.set_x(14)
+    buffer = io.BytesIO()
+    doc = BaseDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=1.6 * cm,
+        rightMargin=1.6 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.5 * cm,
+    )
+    frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="normal")
 
-    def dimensions_bar_chart(x, y, w, h):
-        pdf.set_xy(x, y)
-        pdf.set_fill_color(248, 250, 252)
-        pdf.set_draw_color(220, 226, 235)
-        pdf.rect(x, y, w, h, "DF")
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_text_color(11, 18, 32)
-        pdf.set_xy(x + 4, y + 3)
-        pdf.cell(w - 8, 5, "Graphique des dimensions de risque", ln=True)
+    def footer(canvas, doc_obj):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7.5)
+        canvas.setFillColor(colors.HexColor("#64748b"))
+        canvas.drawCentredString(A4[0] / 2, 0.8 * cm, f"CriticalRisk Intelligence | Rapport confidentiel | Page {doc_obj.page}")
+        canvas.restoreState()
 
-        bar_x = x + 48
-        bar_w = w - 60
-        current_y = y + 13
-        for name, score in result.dimensions.items():
-            r, g, b = score_color(score)
-            pdf.set_font("Helvetica", "", 6.8)
-            pdf.set_text_color(60, 70, 85)
-            pdf.set_xy(x + 4, current_y - 1)
-            pdf.cell(42, 4, clean(name[:22]))
-            pdf.set_fill_color(230, 235, 242)
-            pdf.rect(bar_x, current_y, bar_w, 3.4, "F")
-            pdf.set_fill_color(r, g, b)
-            pdf.rect(bar_x, current_y, bar_w * score / 100, 3.4, "F")
-            pdf.set_xy(bar_x + bar_w + 2, current_y - 1)
-            pdf.set_font("Helvetica", "B", 7)
-            pdf.set_text_color(11, 18, 32)
-            pdf.cell(10, 4, f"{score}")
-            current_y += 7
+    doc.addPageTemplates([PageTemplate(id="report", frames=[frame], onPage=footer)])
 
-    def risk_matrix(x, y, size):
-        pdf.set_xy(x, y)
-        cell = size / 3
-        zones = [
-            ((226, 245, 235), "Faible"),
-            ((255, 248, 220), "Modere"),
-            ((255, 238, 226), "Eleve"),
-            ((255, 248, 220), "Modere"),
-            ((255, 238, 226), "Eleve"),
-            ((255, 226, 226), "Critique"),
-            ((255, 238, 226), "Eleve"),
-            ((255, 226, 226), "Critique"),
-            ((255, 226, 226), "Critique"),
+    base = getSampleStyleSheet()
+    styles = {
+        "cover_label": ParagraphStyle("cover_label", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=10, textColor=colors.HexColor("#f5b942"), leading=12),
+        "title": ParagraphStyle("title", parent=base["Title"], fontName="Helvetica-Bold", fontSize=25, textColor=colors.white, leading=29, spaceAfter=4),
+        "subtitle": ParagraphStyle("subtitle", parent=base["Normal"], fontSize=10.5, textColor=colors.white, leading=14),
+        "h1": ParagraphStyle("h1", parent=base["Heading1"], fontName="Helvetica-Bold", fontSize=15, textColor=colors.HexColor("#0b1220"), leading=18, spaceBefore=8, spaceAfter=6),
+        "h2": ParagraphStyle("h2", parent=base["Heading2"], fontName="Helvetica-Bold", fontSize=12, textColor=colors.HexColor("#0b1220"), leading=15, spaceBefore=8, spaceAfter=5),
+        "body": ParagraphStyle("body", parent=base["BodyText"], fontSize=9.2, leading=13.4, textColor=colors.HexColor("#1f2937"), alignment=TA_LEFT, spaceAfter=7),
+        "small": ParagraphStyle("small", parent=base["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#475569"), spaceAfter=5),
+        "caption": ParagraphStyle("caption", parent=base["BodyText"], fontSize=7.2, leading=9.5, textColor=colors.HexColor("#64748b"), spaceAfter=4),
+        "kpi_label": ParagraphStyle("kpi_label", parent=base["BodyText"], fontName="Helvetica-Bold", fontSize=7, textColor=colors.HexColor("#64748b"), leading=9),
+        "kpi_value": ParagraphStyle("kpi_value", parent=base["BodyText"], fontName="Helvetica-Bold", fontSize=12, leading=15),
+        "table": ParagraphStyle("table", parent=base["BodyText"], fontSize=7.6, leading=9.5, textColor=colors.HexColor("#1f2937")),
+        "table_head": ParagraphStyle("table_head", parent=base["BodyText"], fontName="Helvetica-Bold", fontSize=7.4, leading=9, textColor=colors.white, alignment=TA_CENTER),
+    }
+
+    def p(text, style="body"):
+        return Paragraph(esc(text), styles[style])
+
+    def heading(text, level=1):
+        return Paragraph(esc(text), styles["h1" if level == 1 else "h2"])
+
+    def table(headers, rows, widths):
+        data = [[Paragraph(esc(h), styles["table_head"]) for h in headers]]
+        for row in rows:
+            data.append([Paragraph(esc(cell), styles["table"]) for cell in row])
+        t = Table(data, colWidths=widths, repeatRows=1, hAlign="LEFT")
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0b1220")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#dce3ee")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#f8fafc"), colors.white]),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        return t
+
+    def kpi_cell(label, value, subtitle, text_color):
+        return [
+            Paragraph(esc(label), styles["kpi_label"]),
+            Paragraph(f'<font color="{text_color}">{esc(value)}</font>', styles["kpi_value"]),
+            Paragraph(esc(subtitle), styles["caption"]),
         ]
-        idx = 0
-        for row in range(3):
-            for col in range(3):
-                color, label = zones[idx]
-                pdf.set_fill_color(*color)
-                pdf.set_draw_color(220, 226, 235)
-                pdf.rect(x + col * cell, y + row * cell, cell, cell, "DF")
-                pdf.set_font("Helvetica", "", 6)
-                pdf.set_text_color(95, 105, 120)
-                pdf.set_xy(x + col * cell + 2, y + row * cell + 2)
-                pdf.cell(cell - 4, 3, label)
-                idx += 1
 
-        px = x + (result.probability / 100) * size
-        py = y + size - (result.impact / 100) * size
-        pdf.set_fill_color(*score_color(result.global_score))
-        pdf.ellipse(px - 2.2, py - 2.2, 4.4, 4.4, "F")
-        pdf.set_draw_color(11, 18, 32)
-        pdf.rect(x, y, size, size)
-        pdf.set_font("Helvetica", "B", 7)
-        pdf.set_text_color(11, 18, 32)
-        pdf.set_xy(x, y - 7)
-        pdf.cell(size, 5, "Matrice probabilite / impact", align="C")
-        pdf.set_font("Helvetica", "", 6)
-        pdf.set_xy(x, y + size + 2)
-        pdf.cell(size, 4, "Probabilite ->", align="C")
-        pdf.set_xy(x - 10, y + size / 2 - 3)
-        pdf.cell(8, 4, "Impact", align="R")
-
-    # Cover page
-    pdf.add_page()
-    pdf.set_fill_color(7, 16, 29)
-    pdf.rect(0, 0, 210, 46, "F")
-    pdf.set_text_color(245, 185, 66)
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.set_xy(14, 10)
-    pdf.cell(0, 7, "CRITICALRISK INTELLIGENCE", ln=True)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 24)
-    pdf.set_x(14)
-    pdf.multi_cell(172, 9, "Rapport de diagnostic import-export")
-    pdf.set_font("Helvetica", "", 11)
-    pdf.set_x(14)
-    pdf.multi_cell(172, 6, "Analyse des risques, cout de non-action et plan de mitigation priorise")
-
-    pdf.set_y(56)
-    kpi_y = 56
-    kpi_box(14, kpi_y, 42, "SCORE ACTUEL", f"{result.global_score}/100", result.level, score_color(result.global_score), h=24)
-    kpi_box(60, kpi_y, 42, "SCORE CIBLE", f"{result.target_score}/100", f"-{result.score_reduction} pts", (22, 163, 74), h=24)
-    kpi_box(106, kpi_y, 42, "COUT NON-ACTION", money(result.non_action_cost), "estimation", (220, 38, 38), h=24)
-    kpi_box(152, kpi_y, 44, "GAIN POTENTIEL", money(result.estimated_savings), "apres actions", (22, 163, 74), h=24)
-
-    pdf.set_y(84)
-    section("Synthese decisionnelle")
-    paragraph(decision_recommendation(result), size=10, line_height=6)
-    paragraph(strategic_diagnosis(inputs, result), size=9, line_height=5)
-
-    section("1. Profil analyse")
-    simple_table(
-        ["Indicateur", "Valeur", "Lecture"],
+    story = []
+    cover = Table(
         [
-            ["Depense annuelle exposee", money(inputs.get("annual_spend", 0)), "Base economique du diagnostic"],
-            ["CA dependant des flux import critiques", f"{inputs.get('revenue_dependency', 0)}%", "Exposition amont"],
-            ["CA dependant des marches export", f"{inputs.get('export_revenue_share', 0)}%", "Exposition aval"],
-            ["Fournisseurs qualifies", str(inputs.get("suppliers", 0)), "Diversification fournisseur"],
-            ["Part fournisseur principal", f"{inputs.get('single_supplier_share', 0)}%", "Risque de concentration"],
-            ["Stock tampon", f"{inputs.get('stock_weeks', 0)} semaines", "Capacite d'absorption court terme"],
+            [Paragraph("CRITICALRISK INTELLIGENCE", styles["cover_label"])],
+            [Paragraph("Rapport de diagnostic import-export", styles["title"])],
+            [Paragraph("Analyse des risques, cout de non-action et plan de mitigation priorise", styles["subtitle"])],
         ],
-        [64, 36, 82],
+        colWidths=[doc.width],
+        rowHeights=[0.65 * cm, 1.15 * cm, 0.65 * cm],
     )
+    cover.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#07101d")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 18),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 18),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.extend([cover, Spacer(1, 0.45 * cm)])
 
-    section("2. Dimensions de risque et positionnement")
-    chart_y = pdf.get_y()
-    dimensions_bar_chart(14, chart_y, 116, 62)
-    risk_matrix(140, chart_y + 4, 52)
-    pdf.set_y(chart_y + 70)
-    simple_table(
-        ["Dimension", "Score", "Niveau"],
-        [[name, f"{score}/100", risk_level_text(score)] for name, score in result.dimensions.items()],
-        [82, 30, 70],
-    )
-    paragraph(
-        "Lecture: les dimensions les plus elevees indiquent les zones ou une action rapide aura le plus d'effet. "
-        "La matrice croise la probabilite et l'impact: plus le point se rapproche de la zone critique, plus le sujet doit etre traite comme un risque de continuite commerciale.",
-        size=8,
-        line_height=4,
-    )
+    kpis = Table([[
+        kpi_cell("SCORE ACTUEL", f"{result.global_score}/100", result.level, "#d4a041" if result.global_score < 55 else "#ea580c"),
+        kpi_cell("SCORE CIBLE", f"{result.target_score}/100", f"-{result.score_reduction} pts", "#16a34a"),
+        kpi_cell("COUT NON-ACTION", money(result.non_action_cost), "estimation", "#dc2626"),
+        kpi_cell("GAIN POTENTIEL", money(result.estimated_savings), "apres actions", "#16a34a"),
+    ]], colWidths=[doc.width / 4 - 5] * 4)
+    kpis.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dce3ee")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dce3ee")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.extend([kpis, Spacer(1, 0.25 * cm)])
 
-    section("3. Causes racines prioritaires")
+    story.extend([
+        heading("1. Synthese decisionnelle"),
+        p(decision_recommendation(result)),
+        p(strategic_diagnosis(inputs, result)),
+        p(
+            "Ce rapport doit etre lu comme une note de decision. Il identifie les principaux points de fragilite, "
+            "quantifie l'ordre de grandeur financier et transforme le diagnostic en actions operationnelles. "
+            "Les scores ne remplacent pas un audit exhaustif, mais ils donnent une base structuree pour arbitrer les priorites.",
+        ),
+        heading("2. Profil analyse", 2),
+        table(
+            ["Indicateur", "Valeur", "Lecture"],
+            [
+                ["Entreprise", company or "Non renseignee", "Perimetre de lecture du rapport"],
+                ["Profil international", inputs.get("trade_profile", "Non renseigne"), "Nature principale des flux exposes"],
+                ["Secteur", inputs["sector"], "Base de risque sectoriel"],
+                ["Flux critiques", ", ".join(inputs["materials"]), "Composants ou matieres sensibles du scenario"],
+                ["Depense annuelle exposee", money(inputs.get("annual_spend", 0)), "Base economique du diagnostic"],
+                ["CA dependant des flux import critiques", f"{inputs.get('revenue_dependency', 0)}%", "Exposition amont"],
+                ["CA dependant des marches export", f"{inputs.get('export_revenue_share', 0)}%", "Exposition aval"],
+            ],
+            [4.8 * cm, 4.0 * cm, 7.4 * cm],
+        ),
+        PageBreak(),
+        heading("3. Diagnostic visuel du risque"),
+    ])
+
+    charts = Table([[RiskBars(result.dimensions), RiskMatrix(result.probability, result.impact, result.global_score)]], colWidths=[10.8 * cm, 6.2 * cm])
+    charts.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.extend([
+        charts,
+        Spacer(1, 0.2 * cm),
+        table(
+            ["Dimension", "Score", "Niveau", "Interpretation"],
+            [
+                [
+                    name,
+                    f"{score}/100",
+                    risk_level_text(score),
+                    "Zone prioritaire" if score >= 70 else "Surveillance active" if score >= 45 else "Risque contenu",
+                ]
+                for name, score in result.dimensions.items()
+            ],
+            [4.3 * cm, 2.0 * cm, 2.6 * cm, 7.3 * cm],
+        ),
+        p(
+            "La matrice probabilite / impact permet de distinguer les risques frequents mais absorbables des risques moins probables mais critiques. "
+            "Dans une logique de direction generale, l'objectif n'est pas de supprimer tout risque, mais de reduire les points de dependance qui peuvent "
+            "transformer un incident externe en perte de chiffre d'affaires, rupture de service ou deterioration de marge.",
+            "small",
+        ),
+        heading("4. Causes racines prioritaires", 2),
+    ])
     for cause in result.root_causes:
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.set_text_color(11, 18, 32)
-        pdf.multi_cell(182, 5, clean(f"{cause['title']} - {cause['severity']}/100"))
-        paragraph(cause_explanation(cause), size=8, line_height=4)
-        pdf.ln(1)
+        story.extend([
+            KeepTogether([
+                Paragraph(f"<b>{esc(cause['title'])} - {cause['severity']}/100</b>", styles["body"]),
+                p(cause_explanation(cause), "small"),
+            ])
+        ])
 
-    section("4. Lecture economique")
-    paragraph(financial_diagnosis(result), size=8, line_height=4)
-    simple_table(
-        ["Indicateur financier", "Montant / statut", "Interpretation"],
-        [
-            ["Exposition economique estimee", money(result.exposure_eur), "Base exposee au risque import-export"],
-            ["Cout potentiel de non-action", money(result.non_action_cost), "Perte potentielle si aucune action n'est engagee"],
-            ["Cout residuel apres actions", money(result.residual_cost), "Risque restant apres mitigation"],
-            ["Gain potentiel estime", money(result.estimated_savings), "Valeur economique indicative du plan d'action"],
-            ["Niveau de confiance", confidence_level(result), "Qualite indicative des donnees disponibles"],
-        ],
-        [58, 48, 76],
-    )
-
-    pdf.add_page()
-    section("5. Plan de mitigation priorise")
-    paragraph(
-        "Le plan de mitigation priorise les actions selon trois criteres: reduction attendue du score, faisabilite operationnelle et valeur economique indicative. "
-        "Les actions ne doivent pas etre lues comme une simple liste de taches, mais comme un sequence de decision: comprendre l'exposition, securiser les alternatives, puis installer une gouvernance de suivi.",
-        size=8,
-        line_height=4,
-    )
-    simple_table(
-        ["Priorite", "Horizon", "Action", "Effet", "Valeur"],
-        [
+    story.extend([
+        PageBreak(),
+        heading("5. Lecture economique"),
+        p(financial_diagnosis(result)),
+        table(
+            ["Indicateur financier", "Montant / statut", "Interpretation"],
             [
-                action["priority"],
-                action["horizon"],
-                action["title"],
-                f"-{action['score_effect']} pts",
-                money(action["value_eur"]),
-            ]
-            for action in result.mitigation
-        ],
-        [28, 24, 74, 22, 34],
-    )
-    for action in result.mitigation[:4]:
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_text_color(11, 18, 32)
-        pdf.set_x(14)
-        pdf.multi_cell(182, 4, clean(action["title"]))
-        paragraph(action_explanation(action), size=7.5, line_height=3.8)
+                ["Exposition economique estimee", money(result.exposure_eur), "Base exposee au risque import-export"],
+                ["Cout potentiel de non-action", money(result.non_action_cost), "Perte potentielle si aucune action n'est engagee"],
+                ["Cout residuel apres actions", money(result.residual_cost), "Risque restant apres mitigation"],
+                ["Gain potentiel estime", money(result.estimated_savings), "Valeur indicative du plan d'action"],
+                ["Niveau de confiance", confidence_level(result), "Qualite indicative des donnees disponibles"],
+            ],
+            [4.8 * cm, 4.0 * cm, 7.4 * cm],
+        ),
+        p(
+            "La lecture financiere doit etre interpretee comme une estimation de decision, pas comme une valorisation comptable definitive. "
+            "Elle sert a objectiver la discussion: combien coute l'inaction, quel niveau de risque demeure apres mitigation, et quelles actions offrent "
+            "le meilleur rapport valeur / effort.",
+            "small",
+        ),
+        heading("6. Plan de mitigation priorise"),
+        p(
+            "Le plan de mitigation priorise les actions selon trois criteres: reduction attendue du score, faisabilite operationnelle et valeur economique indicative. "
+            "La sequence recommandee est volontairement pragmatique: cartographier, diversifier, proteger les marges et installer un pilotage mensuel.",
+        ),
+        table(
+            ["Priorite", "Horizon", "Action", "Effet", "Valeur"],
+            [[a["priority"], a["horizon"], a["title"], f"-{a['score_effect']} pts", money(a["value_eur"])] for a in result.mitigation],
+            [2.5 * cm, 2.1 * cm, 7.0 * cm, 2.0 * cm, 2.6 * cm],
+        ),
+    ])
+    for action in result.mitigation[:5]:
+        story.extend([
+            Paragraph(f"<b>{esc(action['title'])}</b>", styles["body"]),
+            p(action_explanation(action), "small"),
+        ])
 
-    section("6. Scenarios de stress")
-    paragraph(
-        "Les stress tests traduisent le diagnostic en situations concretes. Ils permettent de discuter avec la direction des consequences possibles avant qu'un choc ne survienne: delai client, rupture d'approvisionnement, hausse de cout, blocage reglementaire ou perte de marge.",
-        size=8,
-        line_height=4,
-    )
-    simple_table(
-        ["Scenario", "Impact", "Cout estime", "Lecture"],
-        [
-            [
-                scenario["name"],
-                f"{scenario['impact_score']}/100",
-                money(scenario["estimated_cost"]),
-                scenario["description"],
-            ]
-            for scenario in result.scenario_impacts
-        ],
-        [48, 22, 36, 76],
-    )
-    pdf.add_page()
-    section("7. Donnees a consolider")
-    paragraph(
-        "Les donnees ci-dessous sont prioritaires car elles peuvent modifier significativement le score. Les collecter permet de passer d'une estimation prudente a un diagnostic plus defensible devant un dirigeant, un financeur ou un investisseur.",
-        size=8,
-        line_height=4,
-    )
+    story.extend([
+        PageBreak(),
+        heading("7. Scenarios de stress"),
+        p(
+            "Les stress tests traduisent le diagnostic en situations concretes. Ils permettent d'anticiper les consequences d'un choc avant qu'il ne survienne: "
+            "retard client, rupture d'approvisionnement, hausse de cout, blocage reglementaire ou perte de marge.",
+        ),
+        table(
+            ["Scenario", "Impact", "Cout estime", "Lecture"],
+            [[s["name"], f"{s['impact_score']}/100", money(s["estimated_cost"]), s["description"]] for s in result.scenario_impacts],
+            [4.1 * cm, 2.1 * cm, 3.0 * cm, 7.0 * cm],
+        ),
+        heading("8. Donnees a consolider"),
+        p(
+            "Les donnees ci-dessous peuvent modifier significativement le score. Les collecter permet de passer d'une estimation prudente "
+            "a un diagnostic plus defensible devant un dirigeant, un financeur ou un investisseur.",
+        ),
+    ])
     if result.data_gaps:
         for gap in result.data_gaps:
-            paragraph(f"- {gap}", size=9)
+            story.append(Paragraph(f"- {esc(gap)}", styles["body"]))
     else:
-        paragraph("Aucun manque critique identifie dans les donnees declarees.", size=9)
+        story.append(p("Aucun manque critique identifie dans les donnees declarees."))
 
-    section("8. Methodologie")
-    paragraph(
-        "Le score CriticalRisk combine plusieurs dimensions: approvisionnement, marches export, logistique, reglementaire, prix/devise et resilience interne. "
-        "Chaque dimension est estimee a partir des informations declarees dans le questionnaire et des ponderations internes du modele.",
-        size=8,
-        line_height=4,
-    )
-    paragraph(
-        "La probabilite mesure la vraisemblance d'un choc ou d'une degradation operationnelle. L'impact mesure la consequence economique et operationnelle potentielle. "
-        "Le score global combine ces deux axes afin de prioriser les decisions de mitigation.",
-        size=8,
-        line_height=4,
-    )
+    story.extend([
+        heading("9. Methodologie et limites"),
+        p(
+            "Le score CriticalRisk combine plusieurs dimensions: approvisionnement, marches export, logistique, reglementaire, prix/devise et resilience interne. "
+            "Chaque dimension est estimee a partir des informations declarees dans le questionnaire et de ponderations internes du modele.",
+            "small",
+        ),
+        p(
+            "La probabilite mesure la vraisemblance d'un choc ou d'une degradation operationnelle. L'impact mesure la consequence economique et operationnelle potentielle. "
+            "Le score global combine ces deux axes afin de prioriser les decisions de mitigation.",
+            "small",
+        ),
+        p(
+            "Ce rapport constitue une aide a la decision. Il ne remplace pas un audit juridique, douanier, financier ou assurantiel. "
+            "Les estimations doivent etre confirmees avec contrats, volumes, historique prix, pays fournisseurs, pays clients, incoterms, clauses de paiement et plans de continuite.",
+            "small",
+        ),
+    ])
 
-    section("9. Limites et prochaines etapes")
-    paragraph(
-        "Ce rapport constitue une aide a la decision. Il ne remplace pas un audit juridique, douanier, financier ou assurantiel. "
-        "Les estimations doivent etre confirmees avec contrats, volumes, historique prix, pays fournisseurs, pays clients, incoterms, clauses de paiement et plans de continuite.",
-        size=8,
-        line_height=4,
-    )
-    paragraph(
-        "Prochaine etape recommandee: consolider les donnees manquantes, valider les hypotheses avec les equipes achats, finance et operations, puis simuler un scenario cible apres mitigation.",
-        size=8,
-        line_height=4,
-    )
-
-    buf = io.BytesIO()
-    pdf.output(buf)
-    buf.seek(0)
-    return buf.read()
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.read()
