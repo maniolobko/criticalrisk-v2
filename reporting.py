@@ -35,6 +35,52 @@ def risk_level_text(score):
     return "Faible"
 
 
+def truncate(text, max_len):
+    text = str(text)
+    return text if len(text) <= max_len else text[: max_len - 1] + "."
+
+
+def strategic_diagnosis(inputs, result):
+    main_dimensions = sorted(result.dimensions.items(), key=lambda item: item[1], reverse=True)[:2]
+    leaders = " et ".join(f"{name.lower()} ({score}/100)" for name, score in main_dimensions)
+    return (
+        f"Le diagnostic montre une exposition prioritaire sur {leaders}. "
+        f"Pour un profil {inputs.get('trade_profile', 'import-export')}, cela signifie que le risque ne se limite pas a une rupture ponctuelle: "
+        "il peut affecter la continuite commerciale, les marges, les delais clients et la capacite a tenir les engagements contractuels. "
+        f"Le score actuel de {result.global_score}/100 doit donc etre lu comme un signal de pilotage: il indique le niveau d'urgence, "
+        "mais aussi les leviers concrets permettant de ramener le risque vers un niveau cible plus acceptable."
+    )
+
+
+def financial_diagnosis(result):
+    return (
+        f"L'exposition economique estimee atteint {money(result.exposure_eur)}. "
+        f"En l'absence d'action, le cout potentiel est estime a {money(result.non_action_cost)}, contre un cout residuel de "
+        f"{money(result.residual_cost)} apres mise en oeuvre du plan de mitigation. "
+        f"L'ecart, soit {money(result.estimated_savings)}, represente la valeur indicative du plan d'action. "
+        "Cette estimation doit etre consideree comme un ordre de grandeur decisionnel: elle sert a prioriser les actions et a justifier "
+        "l'investissement dans la resilience import-export."
+    )
+
+
+def cause_explanation(cause):
+    return (
+        f"{cause['title']} est une cause prioritaire car elle pese a {cause['severity']}/100 dans le diagnostic. "
+        f"{cause['detail']} Cette faiblesse peut amplifier un choc externe: hausse de prix, retard logistique, blocage douanier, "
+        "restriction pays ou perte de capacite fournisseur/client. Le point important n'est pas seulement le niveau du score, mais la capacite "
+        "de l'entreprise a reduire cette dependance par des alternatives, de la visibilite et des procedures de decision rapides."
+    )
+
+
+def action_explanation(action):
+    return (
+        f"{action['title']} doit etre traite sur un horizon {action['horizon'].lower()} car l'action peut reduire le score d'environ "
+        f"{action['score_effect']} points. L'objectif operationnel est clair: {action['detail']} "
+        f"Le KPI de suivi est: {action['kpi']}. L'effort est estime {action['effort'].lower()} pour un impact {action['impact'].lower()}, "
+        f"avec une valeur indicative de {money(action['value_eur'])}."
+    )
+
+
 def build_text_report(company, inputs, result):
     lines = [
         "CRITICALRISK INTELLIGENCE",
@@ -123,6 +169,7 @@ def build_pdf(company, inputs, result):
 
     def section(title):
         pdf.ln(2)
+        pdf.set_x(14)
         pdf.set_text_color(11, 18, 32)
         pdf.set_font("Helvetica", "B", 11)
         pdf.cell(0, 6, clean(title), ln=True)
@@ -132,11 +179,13 @@ def build_pdf(company, inputs, result):
         pdf.ln(2)
 
     def paragraph(text, size=9, line_height=5):
+        pdf.set_x(14)
         pdf.set_text_color(38, 45, 58)
         pdf.set_font("Helvetica", "", size)
         pdf.multi_cell(182, line_height, clean(text))
 
     def label_value(label, value, width=60):
+        pdf.set_x(14)
         pdf.set_font("Helvetica", "B", 8)
         pdf.set_text_color(85, 95, 110)
         pdf.cell(width, 5, clean(label), ln=False)
@@ -171,7 +220,7 @@ def build_pdf(company, inputs, result):
         pdf.set_text_color(96, 108, 124)
         pdf.multi_cell(w - 8, 4, clean(subtitle))
 
-    def simple_table(headers, rows, widths, line_height=6):
+    def simple_table(headers, rows, widths, line_height=5):
         def table_header():
             pdf.set_x(14)
             pdf.set_fill_color(11, 18, 32)
@@ -188,13 +237,7 @@ def build_pdf(company, inputs, result):
 
         pdf.set_font("Helvetica", "", 7)
         for row_index, row in enumerate(rows):
-            max_lines = 1
-            for value, width in zip(row, widths):
-                text_width = max(width - 3, 8)
-                approx_chars = max(int(text_width / 1.7), 10)
-                lines = max(1, (len(clean(value)) // approx_chars) + 1)
-                max_lines = max(max_lines, lines)
-            row_height = min(max_lines, 2) * 4.0 + 2
+            row_height = 5
             if pdf.get_y() + row_height > 270:
                 pdf.add_page()
                 table_header()
@@ -202,13 +245,11 @@ def build_pdf(company, inputs, result):
             fill = row_index % 2 == 0
             pdf.set_fill_color(248, 250, 252 if fill else 255)
             pdf.set_text_color(35, 45, 60)
-            y_start = pdf.get_y()
-            x_start = 14
             for value, width in zip(row, widths):
-                pdf.set_xy(x_start, y_start)
-                pdf.multi_cell(width, 4.0, clean(value), border=1, fill=fill)
-                x_start += width
-            pdf.set_xy(14, y_start + row_height)
+                max_chars = max(int((width - 2) / 1.45), 8)
+                pdf.cell(width, row_height, clean(truncate(value, max_chars)), border=1, fill=fill)
+            pdf.ln(row_height)
+            pdf.set_x(14)
 
     def dimensions_bar_chart(x, y, w, h):
         pdf.set_xy(x, y)
@@ -305,10 +346,10 @@ def build_pdf(company, inputs, result):
     kpi_box(106, kpi_y, 42, "COUT NON-ACTION", money(result.non_action_cost), "estimation", (220, 38, 38), h=24)
     kpi_box(152, kpi_y, 44, "GAIN POTENTIEL", money(result.estimated_savings), "apres actions", (22, 163, 74), h=24)
 
-    pdf.set_y(86)
+    pdf.set_y(84)
     section("Synthese decisionnelle")
     paragraph(decision_recommendation(result), size=10, line_height=6)
-    paragraph(result.executive_summary, size=10, line_height=6)
+    paragraph(strategic_diagnosis(inputs, result), size=9, line_height=5)
 
     section("1. Profil analyse")
     simple_table(
@@ -324,7 +365,7 @@ def build_pdf(company, inputs, result):
         [64, 36, 82],
     )
 
-    section("2. Dimensions de risque")
+    section("2. Dimensions de risque et positionnement")
     chart_y = pdf.get_y()
     dimensions_bar_chart(14, chart_y, 116, 62)
     risk_matrix(140, chart_y + 4, 52)
@@ -334,16 +375,23 @@ def build_pdf(company, inputs, result):
         [[name, f"{score}/100", risk_level_text(score)] for name, score in result.dimensions.items()],
         [82, 30, 70],
     )
+    paragraph(
+        "Lecture: les dimensions les plus elevees indiquent les zones ou une action rapide aura le plus d'effet. "
+        "La matrice croise la probabilite et l'impact: plus le point se rapproche de la zone critique, plus le sujet doit etre traite comme un risque de continuite commerciale.",
+        size=8,
+        line_height=4,
+    )
 
     section("3. Causes racines prioritaires")
     for cause in result.root_causes:
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_text_color(11, 18, 32)
         pdf.multi_cell(182, 5, clean(f"{cause['title']} - {cause['severity']}/100"))
-        paragraph(cause["detail"], size=9)
+        paragraph(cause_explanation(cause), size=8, line_height=4)
         pdf.ln(1)
 
     section("4. Lecture economique")
+    paragraph(financial_diagnosis(result), size=8, line_height=4)
     simple_table(
         ["Indicateur financier", "Montant / statut", "Interpretation"],
         [
@@ -358,6 +406,12 @@ def build_pdf(company, inputs, result):
 
     pdf.add_page()
     section("5. Plan de mitigation priorise")
+    paragraph(
+        "Le plan de mitigation priorise les actions selon trois criteres: reduction attendue du score, faisabilite operationnelle et valeur economique indicative. "
+        "Les actions ne doivent pas etre lues comme une simple liste de taches, mais comme un sequence de decision: comprendre l'exposition, securiser les alternatives, puis installer une gouvernance de suivi.",
+        size=8,
+        line_height=4,
+    )
     simple_table(
         ["Priorite", "Horizon", "Action", "Effet", "Valeur"],
         [
@@ -372,8 +426,19 @@ def build_pdf(company, inputs, result):
         ],
         [28, 24, 74, 22, 34],
     )
+    for action in result.mitigation[:4]:
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(11, 18, 32)
+        pdf.set_x(14)
+        pdf.multi_cell(182, 4, clean(action["title"]))
+        paragraph(action_explanation(action), size=7.5, line_height=3.8)
 
     section("6. Scenarios de stress")
+    paragraph(
+        "Les stress tests traduisent le diagnostic en situations concretes. Ils permettent de discuter avec la direction des consequences possibles avant qu'un choc ne survienne: delai client, rupture d'approvisionnement, hausse de cout, blocage reglementaire ou perte de marge.",
+        size=8,
+        line_height=4,
+    )
     simple_table(
         ["Scenario", "Impact", "Cout estime", "Lecture"],
         [
@@ -387,7 +452,13 @@ def build_pdf(company, inputs, result):
         ],
         [48, 22, 36, 76],
     )
+    pdf.add_page()
     section("7. Donnees a consolider")
+    paragraph(
+        "Les donnees ci-dessous sont prioritaires car elles peuvent modifier significativement le score. Les collecter permet de passer d'une estimation prudente a un diagnostic plus defensible devant un dirigeant, un financeur ou un investisseur.",
+        size=8,
+        line_height=4,
+    )
     if result.data_gaps:
         for gap in result.data_gaps:
             paragraph(f"- {gap}", size=9)
