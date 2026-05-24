@@ -1324,6 +1324,22 @@ def comparison_table(results, selected_names):
     st.dataframe(rows, width="stretch", hide_index=True)
 
 
+def render_comparison_legend():
+    legend_rows = [
+        {"Abreviation": "APP", "Libelle": "Approvisionnement", "Definition": "Dependance fournisseurs, concentration, stock tampon et substitution."},
+        {"Abreviation": "EXP", "Libelle": "Marches export", "Definition": "Dependance aux pays clients, concentration aval et exposition commerciale."},
+        {"Abreviation": "LOG", "Libelle": "Logistique", "Definition": "Routes, delais, diversite transport et capacite d'absorption."},
+        {"Abreviation": "REG", "Libelle": "Reglementaire", "Definition": "Douane, sanctions, export control, licences et contraintes pays."},
+        {"Abreviation": "FX", "Libelle": "Prix et devise", "Definition": "Volatilite matieres, energie, devise, paiement et couverture."},
+        {"Abreviation": "RES", "Libelle": "Resilience interne", "Definition": "Maturite risque, veille, gouvernance et capacite de reaction."},
+        {"Abreviation": "IMP", "Libelle": "Impact", "Definition": "Gravite economique et operationnelle potentielle du scenario."},
+        {"Abreviation": "Cible", "Libelle": "Score cible", "Definition": "Score estime apres mise en oeuvre des actions prioritaires."},
+    ]
+    st.markdown("#### Legende")
+    st.caption("Lecture des indicateurs: 0 = exposition faible, 100 = exposition critique. Plus le score est eleve, plus le risque est important.")
+    st.dataframe(legend_rows, width="stretch", hide_index=True)
+
+
 def render_causes(result):
     if not result.root_causes:
         st.info("Aucune cause prioritaire identifiee pour ce scenario.")
@@ -1451,6 +1467,7 @@ def main():
                 render_player_card(name, saved_results[name], compact=True)
         st.markdown("### Tableau comparatif")
         comparison_table(saved_results, selected_names)
+        render_comparison_legend()
 
     with tab_radar:
         render_context_banner(edited_payload, preview_result, "Lecture radar")
