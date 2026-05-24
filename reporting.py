@@ -36,6 +36,30 @@ def risk_level_text(score):
     return "Faible"
 
 
+def score_scale_rows():
+    return [
+        ("0-34", "Faible", "Risque contenu, veille active suffisante."),
+        ("35-54", "Modere", "Risque sous controle mais dependances a surveiller."),
+        ("55-74", "Eleve", "Plan de reduction du risque recommande."),
+        ("75-100", "Critique", "Risque de continuite d'activite, mitigation prioritaire."),
+    ]
+
+
+def roadmap_rows():
+    return [
+        ("0-30 jours", "Verifier les donnees critiques", "Fournisseurs, pays, flux, incoterms, volumes et devises."),
+        ("30-60 jours", "Reduire les dependances prioritaires", "Alternatives fournisseurs, clients, routes et clauses contractuelles."),
+        ("60-90 jours", "Installer le pilotage", "Comite risque mensuel, seuils d'alerte et tableau de bord marche."),
+        ("90 jours et plus", "Industrialiser la resilience", "Stress tests trimestriels, reporting direction et mise a jour du score."),
+    ]
+
+
+def country_context(inputs):
+    supplier = inputs.get("supplier_country", "Non renseigne")
+    destination = inputs.get("destination_country", "Non renseigne")
+    return f"Pays fournisseur principal: {supplier}. Marche client prioritaire: {destination}."
+
+
 def truncate(text, max_len):
     text = str(text)
     return text if len(text) <= max_len else text[: max_len - 1] + "."
@@ -92,6 +116,7 @@ def build_text_report(company, inputs, result):
         f"Entreprise: {company or 'Non renseignee'}",
         f"Profil international: {inputs.get('trade_profile', 'Non renseigne')}",
         f"Secteur: {inputs['sector']}",
+        country_context(inputs),
         f"Flux critiques: {', '.join(inputs['materials'])}",
         f"Score actuel: {result.global_score}/100 ({result.level})",
         f"Score cible: {result.target_score}/100",
@@ -142,7 +167,18 @@ def build_text_report(company, inputs, result):
         "8. Methodologie et limites",
         "Le score combine exposition import-export, logistique, reglementaire, prix/devise et resilience interne.",
         "Les resultats constituent une aide a la decision et doivent etre consolides avec donnees fournisseurs, pays, contrats, volumes et historiques reels.",
+        "",
+        "Echelle de lecture",
     ])
+    for zone, level, reading in score_scale_rows():
+        lines.append(f"- {zone} | {level}: {reading}")
+
+    lines.extend([
+        "",
+        "9. Feuille de route recommandee",
+    ])
+    for horizon, objective, deliverable in roadmap_rows():
+        lines.append(f"- {horizon}: {objective}. Livrable attendu: {deliverable}")
 
     return "\n".join(lines)
 
@@ -381,6 +417,8 @@ def build_pdf(company, inputs, result):
                 ["Entreprise", company or "Non renseignee", "Perimetre de lecture du rapport"],
                 ["Profil international", inputs.get("trade_profile", "Non renseigne"), "Nature principale des flux exposes"],
                 ["Secteur", inputs["sector"], "Base de risque sectoriel"],
+                ["Pays fournisseur principal", inputs.get("supplier_country", "Non renseigne"), "Exposition amont prioritaire"],
+                ["Marche client prioritaire", inputs.get("destination_country", "Non renseigne"), "Exposition aval prioritaire"],
                 ["Flux critiques", ", ".join(inputs["materials"]), "Composants ou matieres sensibles du scenario"],
                 ["Depense annuelle exposee", money(inputs.get("annual_spend", 0)), "Base economique du diagnostic"],
                 ["CA dependant des flux import critiques", f"{inputs.get('revenue_dependency', 0)}%", "Exposition amont"],
@@ -495,6 +533,11 @@ def build_pdf(company, inputs, result):
             "Chaque dimension est estimee a partir des informations declarees dans le questionnaire et de ponderations internes du modele.",
             "small",
         ),
+        table(
+            ["Zone", "Niveau", "Lecture"],
+            score_scale_rows(),
+            [2.5 * cm, 3.0 * cm, 10.7 * cm],
+        ),
         p(
             "La probabilite mesure la vraisemblance d'un choc ou d'une degradation operationnelle. L'impact mesure la consequence economique et operationnelle potentielle. "
             "Le score global combine ces deux axes afin de prioriser les decisions de mitigation.",
@@ -503,6 +546,17 @@ def build_pdf(company, inputs, result):
         p(
             "Ce rapport constitue une aide a la decision. Il ne remplace pas un audit juridique, douanier, financier ou assurantiel. "
             "Les estimations doivent etre confirmees avec contrats, volumes, historique prix, pays fournisseurs, pays clients, incoterms, clauses de paiement et plans de continuite.",
+            "small",
+        ),
+        heading("10. Feuille de route recommandee"),
+        table(
+            ["Horizon", "Objectif", "Livrable attendu"],
+            roadmap_rows(),
+            [3.0 * cm, 5.0 * cm, 8.2 * cm],
+        ),
+        p(
+            "Cette feuille de route permet de transformer le diagnostic en sequence de travail actionnable. Elle peut etre utilisee comme base de comite risque, "
+            "de presentation direction generale ou de discussion avec un financeur.",
             "small",
         ),
     ])

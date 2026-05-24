@@ -1340,6 +1340,72 @@ def render_comparison_legend():
     st.dataframe(legend_rows, width="stretch", hide_index=True)
 
 
+def render_methodology(payload, result):
+    st.markdown("### Methodologie du diagnostic")
+    st.markdown(
+        f"""
+        <div class="summary-box">
+            <b>Lecture du modele.</b> Le score CriticalRisk transforme le questionnaire du scenario actif en six dimensions de risque,
+            puis combine probabilite et impact pour produire un score global sur 100. Le resultat n'est pas une notation financiere:
+            c'est une aide a la decision pour prioriser les actions de resilience import-export.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    score_rows = [
+        {"Zone": "0-34", "Niveau": "Faible", "Lecture": "Risque contenu, veille active suffisante."},
+        {"Zone": "35-54", "Niveau": "Modere", "Lecture": "Risque sous controle mais dependances a surveiller."},
+        {"Zone": "55-74", "Niveau": "Eleve", "Lecture": "Plan de reduction du risque recommande."},
+        {"Zone": "75-100", "Niveau": "Critique", "Lecture": "Risque de continuite d'activite, mitigation prioritaire."},
+    ]
+    st.markdown("#### Echelle de lecture")
+    st.dataframe(score_rows, width="stretch", hide_index=True)
+
+    dimension_rows = [
+        {"Dimension": name, "Score actuel": f"{score}/100", "Ce que cela mesure": DIMENSION_LABELS[name]}
+        for name, score in result.dimensions.items()
+    ]
+    st.markdown("#### Dimensions du modele")
+    st.dataframe(dimension_rows, width="stretch", hide_index=True)
+
+    st.markdown("#### Hypotheses et limites")
+    hypothesis_rows = [
+        {
+            "Sujet": "Donnees declarees",
+            "Position": "Le modele s'appuie sur les informations saisies par l'utilisateur et doit etre consolide avec donnees internes.",
+        },
+        {
+            "Sujet": "Sources publiques",
+            "Position": "Les donnees BCE, Stooq, World Bank, GDELT et Google News donnent un contexte marche, pas une preuve exhaustive.",
+        },
+        {
+            "Sujet": "Score",
+            "Position": "Le score sert a prioriser les decisions; il ne remplace pas un audit juridique, douanier, assurantiel ou financier.",
+        },
+        {
+            "Sujet": "Comparaison scenarios",
+            "Position": "Les scenarios sont comparables si les hypotheses de perimetre, volumes, pays et flux restent coherentes.",
+        },
+    ]
+    st.dataframe(hypothesis_rows, width="stretch", hide_index=True)
+
+    st.markdown("#### Feuille de route cabinet")
+    roadmap_rows = [
+        {"Horizon": "0-30 jours", "Objectif": "Verifier les donnees critiques", "Livrable": "Liste fournisseurs, pays, flux, incoterms, volumes et devises."},
+        {"Horizon": "30-60 jours", "Objectif": "Reduire les dependances prioritaires", "Livrable": "Plan alternatives fournisseurs, clients, routes et clauses contractuelles."},
+        {"Horizon": "60-90 jours", "Objectif": "Installer le pilotage", "Livrable": "Comite risque mensuel, seuils d'alerte et tableau de bord marche."},
+        {"Horizon": "90 jours et plus", "Objectif": "Industrialiser la resilience", "Livrable": "Stress tests trimestriels, reporting direction et mise a jour du score."},
+    ]
+    st.dataframe(roadmap_rows, width="stretch", hide_index=True)
+
+    st.caption(
+        f"Scenario actif: {payload.get('scenario_name', 'Scenario')} | "
+        f"{payload.get('trade_profile', 'Profil international')} | "
+        f"{payload.get('sector', 'Secteur')} | Score {result.global_score}/100."
+    )
+
+
 def render_causes(result):
     if not result.root_causes:
         st.info("Aucune cause prioritaire identifiee pour ce scenario.")
@@ -1423,7 +1489,7 @@ def render_report(active_name, payload, result):
                 width="stretch",
             )
         else:
-            st.info("Installez fpdf2 pour activer l'export PDF.")
+            st.info("Installez reportlab pour activer l'export PDF.")
 
 
 def main():
@@ -1451,8 +1517,8 @@ def main():
     if not selected_names:
         selected_names = [active_name]
 
-    tab_market, tab_score, tab_radar, tab_matrix, tab_actions, tab_report = st.tabs(
-        ["Dashboard marche", "Score", "Radar", "Matrice", "Mitigation", "Rapport PDF"]
+    tab_market, tab_score, tab_radar, tab_matrix, tab_actions, tab_method, tab_report = st.tabs(
+        ["Dashboard marche", "Score", "Radar", "Matrice", "Mitigation", "Methodologie", "Rapport PDF"]
     )
 
     with tab_market:
@@ -1487,6 +1553,10 @@ def main():
         render_actions(preview_result)
         st.markdown("### Stress tests")
         render_scenarios(preview_result)
+
+    with tab_method:
+        render_context_banner(edited_payload, preview_result, "Cadre methodologique")
+        render_methodology(edited_payload, preview_result)
 
     with tab_report:
         st.markdown("### Rapport du scenario actif enregistre")
