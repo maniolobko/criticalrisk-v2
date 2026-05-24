@@ -12,6 +12,7 @@ ECB_DAILY_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 GOOGLE_NEWS_RSS_URL = "https://news.google.com/rss/search"
 STOOQ_QUOTE_URL = "https://stooq.com/q/l/"
+WORLD_BANK_URL = "https://api.worldbank.org/v2/country"
 
 MARKET_WATCHLIST = [
     {"symbol": "EURUSD", "label": "EUR/USD", "type": "Devise"},
@@ -23,6 +24,14 @@ MARKET_WATCHLIST = [
 ]
 
 RISK_NEWS_QUERY = "(supply chain OR export controls OR sanctions)"
+
+WORLD_BANK_INDICATORS = {
+    "NY.GDP.MKTP.KD.ZG": "Croissance PIB",
+    "FP.CPI.TOTL.ZG": "Inflation",
+    "NE.TRD.GNFS.ZS": "Commerce / PIB",
+    "TX.VAL.MRCH.CD.WT": "Export marchandises",
+    "TM.VAL.MRCH.CD.WT": "Import marchandises",
+}
 
 
 def _fetch_text(url, timeout=10):
@@ -99,6 +108,63 @@ def fetch_market_quotes():
     }
 
 
+def fetch_world_bank_country(country_code):
+    code = (country_code or "").strip().upper()
+    if not code:
+        return None
+
+    indicators = []
+    errors = []
+    for indicator, label in WORLD_BANK_INDICATORS.items():
+        url = f"{WORLD_BANK_URL}/{quote(code)}/indicator/{indicator}?format=json&per_page=5"
+        try:
+            payload = json.loads(_fetch_text(url, timeout=6))
+            rows = payload[1] if isinstance(payload, list) and len(payload) > 1 else []
+            latest = next((row for row in rows if row.get("value") is not None), None)
+            if latest:
+                indicators.append({
+                    "code": indicator,
+                    "label": label,
+                    "value": float(latest["value"]),
+                    "date": latest.get("date", ""),
+                    "country": (latest.get("country") or {}).get("value", code),
+                    "url": url,
+                })
+        except (ValueError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            errors.append({"indicator": indicator, "error": str(exc)})
+
+    country_name = indicators[0]["country"] if indicators else code
+    return {
+        "source": "World Bank",
+        "country_code": code,
+        "country": country_name,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "indicators": indicators,
+        "errors": errors,
+    }
+
+
+def fetch_world_bank_context(supplier_country="", destination_country=""):
+    countries = []
+    seen = set()
+    for role, code in (("Pays fournisseur", supplier_country), ("Pays client", destination_country)):
+        normalized = (code or "").strip().upper()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        country = fetch_world_bank_country(normalized)
+        if country:
+            country["role"] = role
+            countries.append(country)
+
+    return {
+        "source": "World Bank",
+        "url": "https://data.worldbank.org",
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "countries": countries,
+    }
+
+
 def fetch_gdelt_alerts(max_records=5, timespan="24h"):
     query = quote(RISK_NEWS_QUERY)
     url = (
@@ -160,6 +226,7 @@ def build_market_snapshot():
         "ecb": None,
         "quotes": None,
         "news": None,
+        "macro": None,
         "errors": [],
     }
     for key, fetcher in (

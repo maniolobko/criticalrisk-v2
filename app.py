@@ -6,7 +6,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data import MATERIAL_RISK, PERSONAS, SECTORS, TRADE_PROFILES
-from market_data import fetch_ecb_rates, fetch_gdelt_alerts, fetch_market_quotes, market_pressure_score
+from market_data import (
+    fetch_ecb_rates,
+    fetch_gdelt_alerts,
+    fetch_market_quotes,
+    fetch_world_bank_context,
+    market_pressure_score,
+)
 from reporting import build_pdf, build_text_report, money
 from risk_engine import calculate_risk, level_color
 
@@ -221,6 +227,8 @@ def default_scenario(name="Scenario actuel"):
         "persona": PERSONAS[0],
         "trade_profile": "Importateur et exportateur",
         "sector": "Electronique",
+        "supplier_country": "CHN",
+        "destination_country": "USA",
         "materials": ["Semi-conducteurs", "RAM"],
         "suppliers": 1,
         "single_supplier_share": 80,
@@ -385,6 +393,21 @@ def scenario_editor(payload):
             if not edited["materials"]:
                 edited["materials"] = SECTORS[edited["sector"]]["materials"][:1]
         with c3:
+            country_labels = list(COUNTRY_OPTIONS.keys())
+            supplier_code = edited.get("supplier_country", "CHN")
+            destination_code = edited.get("destination_country", "USA")
+            supplier_label = country_label_from_code(supplier_code)
+            destination_label = country_label_from_code(destination_code)
+            if supplier_label not in country_labels:
+                supplier_label = "Chine"
+            if destination_label not in country_labels:
+                destination_label = "Etats-Unis"
+            edited["supplier_country"] = COUNTRY_OPTIONS[
+                st.selectbox("Pays fournisseur principal", country_labels, index=country_labels.index(supplier_label))
+            ]
+            edited["destination_country"] = COUNTRY_OPTIONS[
+                st.selectbox("Pays client / marche prioritaire", country_labels, index=country_labels.index(destination_label))
+            ]
             edited["annual_spend"] = st.number_input(
                 "Depense annuelle exposee (EUR)",
                 min_value=0,
@@ -599,6 +622,33 @@ DIMENSION_LABELS = {
 }
 
 
+COUNTRY_OPTIONS = {
+    "Chine": "CHN",
+    "Etats-Unis": "USA",
+    "Allemagne": "DEU",
+    "France": "FRA",
+    "Italie": "ITA",
+    "Espagne": "ESP",
+    "Royaume-Uni": "GBR",
+    "Turquie": "TUR",
+    "Maroc": "MAR",
+    "Inde": "IND",
+    "Vietnam": "VNM",
+    "Japon": "JPN",
+    "Coree du Sud": "KOR",
+    "Mexique": "MEX",
+    "Bresil": "BRA",
+    "Afrique du Sud": "ZAF",
+}
+
+
+def country_label_from_code(code):
+    for label, option_code in COUNTRY_OPTIONS.items():
+        if option_code == code:
+            return label
+    return code or "Non renseigne"
+
+
 MARKET_EXPOSURE_MAP = {
     "Cuivre": ["HG.F", "USDCNY", "EURUSD"],
     "Aluminium": ["CL.F", "USDCNY", "EURUSD"],
@@ -653,13 +703,16 @@ def contextual_market_pressure(base_pressure, payload, result, quotes):
 def market_context_sentence(payload, result, relevant_quotes, contextual_pressure):
     materials = ", ".join(payload.get("materials", []))
     leader = max(result.dimensions.items(), key=lambda item: item[1])
+    supplier_country = country_label_from_code(payload.get("supplier_country", ""))
+    destination_country = country_label_from_code(payload.get("destination_country", ""))
     if relevant_quotes:
         move = max(relevant_quotes, key=lambda quote: abs(quote.get("change_pct", 0)))
         market_part = f"Le signal marche le plus sensible pour ce scenario est {move['label']} ({move['change_pct']:+.2f}%)."
     else:
         market_part = "Aucun signal de prix public directement relie aux flux selectionnes n'est disponible dans la veille actuelle."
     return (
-        f"Contexte actif: {payload.get('trade_profile', 'Profil international')} | {payload.get('sector', 'Secteur')} | {materials}. "
+        f"Contexte actif: {payload.get('trade_profile', 'Profil international')} | {payload.get('sector', 'Secteur')} | "
+        f"{supplier_country} vers {destination_country} | {materials}. "
         f"Pression contextualisee: {contextual_pressure}/100. {market_part} "
         f"La dimension dominante reste {leader[0].lower()} ({leader[1]}/100), ce qui oriente la lecture du score, du radar, de la matrice et des actions."
     )
@@ -794,6 +847,11 @@ def cached_market_quotes():
 @st.cache_data(ttl=900, show_spinner="Chargement des alertes GDELT...")
 def cached_gdelt_alerts():
     return fetch_gdelt_alerts()
+
+
+@st.cache_data(ttl=3600, show_spinner="Chargement des donnees macro publiques...")
+def cached_world_bank_context(supplier_country, destination_country):
+    return fetch_world_bank_context(supplier_country, destination_country)
 
 
 def safe_market_load(label, loader):
@@ -938,6 +996,87 @@ def render_market_alignment(payload, result, quotes, news, pressure):
                 st.caption(f"{article['domain']} | {article['date']}")
 
 
+def macro_alert_level(indicator):
+    label = indicator.get("label", "")
+    value = indicator.get("value", 0)
+    if label == "Inflation":
+        return "Elevee" if value >= 8 else "Surveillance" if value >= 4 else "Calme"
+    if label == "Croissance PIB":
+        return "Elevee" if value <= -1 else "Surveillance" if value <= 1 else "Calme"
+    if label == "Commerce / PIB":
+        return "Expose" if value >= 80 else "Ouvert" if value >= 40 else "Domestique"
+    return "Reference"
+
+
+def format_macro_value(indicator):
+    value = indicator.get("value", 0)
+    label = indicator.get("label", "")
+    if label in ("Export marchandises", "Import marchandises"):
+        if abs(value) >= 1_000_000_000_000:
+            return f"{value / 1_000_000_000_000:.1f} T USD"
+        return f"{value / 1_000_000_000:.1f} Md USD"
+    return f"{value:.1f}%"
+
+
+def render_macro_context(macro_payload, payload, result):
+    countries = (macro_payload or {}).get("countries", [])
+    st.markdown("#### Contexte macro pays")
+    st.caption("Source publique World Bank, utilisee pour relier le scenario au pays fournisseur et au marche client prioritaire.")
+
+    if not countries:
+        st.info("Aucune donnee macro publique disponible pour les pays du scenario actif.")
+        return
+
+    rows = []
+    for country in countries:
+        for indicator in country.get("indicators", []):
+            rows.append({
+                "Role": country.get("role", ""),
+                "Pays": country.get("country", country.get("country_code", "")),
+                "Indicateur": indicator["label"],
+                "Valeur": format_macro_value(indicator),
+                "Annee": indicator.get("date", ""),
+                "Lecture": macro_alert_level(indicator),
+                "Source": "World Bank",
+            })
+
+    if rows:
+        st.dataframe(rows, width="stretch", hide_index=True)
+
+    inflation_values = [
+        indicator["value"]
+        for country in countries
+        for indicator in country.get("indicators", [])
+        if indicator["label"] == "Inflation"
+    ]
+    trade_values = [
+        indicator["value"]
+        for country in countries
+        for indicator in country.get("indicators", [])
+        if indicator["label"] == "Commerce / PIB"
+    ]
+    macro_pressure = 0
+    if inflation_values:
+        macro_pressure += min(max(inflation_values) * 3, 30)
+    if trade_values:
+        macro_pressure += min(max(trade_values) * 0.20, 20)
+    macro_pressure += result.dimensions["Prix et devise"] * 0.12 + result.dimensions["Reglementaire"] * 0.08
+    macro_pressure = min(100, int(round(macro_pressure)))
+
+    st.markdown(
+        f"""
+        <div class="summary-box">
+            <b>Lecture macro.</b> Pression macro contextualisee: {macro_pressure}/100.
+            Le couple {esc(country_label_from_code(payload.get('supplier_country', '')))} /
+            {esc(country_label_from_code(payload.get('destination_country', '')))} est rapproche du score
+            {result.global_score}/100, de la dimension prix-devise ({result.dimensions['Prix et devise']}/100)
+            et de la dimension reglementaire ({result.dimensions['Reglementaire']}/100).
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_market_dashboard(payload, result):
     col_title, col_action = st.columns([1, .25])
     with col_title:
@@ -948,19 +1087,29 @@ def render_market_dashboard(payload, result):
             cached_ecb_rates.clear()
             cached_market_quotes.clear()
             cached_gdelt_alerts.clear()
+            cached_world_bank_context.clear()
             st.rerun()
 
     ecb, ecb_error = safe_market_load("BCE", cached_ecb_rates)
     quotes_payload, quotes_error = safe_market_load("Stooq", cached_market_quotes)
     news_payload, news_error = safe_market_load("GDELT / Google News", cached_gdelt_alerts)
+    macro_payload, macro_error = safe_market_load(
+        "World Bank",
+        lambda: cached_world_bank_context(
+            payload.get("supplier_country", ""),
+            payload.get("destination_country", ""),
+        ),
+    )
     snapshot = {
         "ecb": ecb,
         "quotes": quotes_payload,
         "news": news_payload,
+        "macro": macro_payload,
         "errors": [
             {"source": "ecb", "error": ecb_error} if ecb_error else None,
             {"source": "quotes", "error": quotes_error} if quotes_error else None,
             {"source": "news", "error": news_error} if news_error else None,
+            {"source": "macro", "error": macro_error} if macro_error else None,
         ],
     }
     snapshot["errors"] = [error for error in snapshot["errors"] if error]
@@ -986,6 +1135,7 @@ def render_market_dashboard(payload, result):
 
     render_market_brief(pressure, quotes, news, rates_payload, payload, result)
     render_market_alignment(payload, result, quotes, news, pressure)
+    render_macro_context(macro_payload, payload, result)
     render_market_segments(quotes, rates_payload)
 
     st.markdown("#### Prix, devises et matieres")
@@ -1054,6 +1204,7 @@ def render_market_dashboard(payload, result):
     st.markdown(
         "- [Banque centrale europeenne - taux de reference](https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html)\n"
         "- [Stooq - cotations publiques](https://stooq.com)\n"
+        "- [World Bank API - indicateurs pays](https://datahelpdesk.worldbank.org/knowledgebase/articles/889392)\n"
         "- [GDELT Project - actualites mondiales](https://www.gdeltproject.org)\n"
         "- [Google News RSS - relais public si GDELT est lent](https://news.google.com)"
     )
