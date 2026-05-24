@@ -167,6 +167,31 @@ st.markdown(
         color:var(--text);
         line-height:1.6;
     }
+    .decision-grid {
+        display:grid;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        gap:.7rem;
+        margin:.8rem 0;
+    }
+    .decision-tile {
+        background:#0f172a;
+        border:1px solid var(--line);
+        border-radius:8px;
+        padding:.75rem;
+        min-height:92px;
+    }
+    .decision-tile strong {
+        display:block;
+        color:var(--text);
+        font-size:1.15rem;
+        margin:.2rem 0;
+    }
+    .context-band {
+        display:flex;
+        flex-wrap:wrap;
+        gap:.45rem;
+        margin:.55rem 0 .85rem;
+    }
     .stButton > button, .stDownloadButton > button {
         border-radius:8px !important;
         border:1px solid rgba(245,185,66,.4) !important;
@@ -177,7 +202,7 @@ st.markdown(
     @media (max-width: 900px) {
         .hero { display:block; }
         .brand-title { font-size:2.25rem; }
-        .metric-grid, .cause-grid { grid-template-columns:1fr; }
+        .metric-grid, .cause-grid, .decision-grid { grid-template-columns:1fr; }
     }
     </style>
     """,
@@ -564,6 +589,198 @@ def render_metrics(result):
     st.markdown(f"<div class='metric-grid'>{html_items}</div>", unsafe_allow_html=True)
 
 
+DIMENSION_LABELS = {
+    "Approvisionnement": "Dependance amont, concentration fournisseur, stock et capacite de substitution.",
+    "Marches export": "Dependance aux pays clients, concentration aval et exposition commerciale internationale.",
+    "Logistique": "Routes, delais, diversite de transport et capacite d'absorption en cas de blocage.",
+    "Reglementaire": "Douane, sanctions, export control, licences, incoterms et contraintes pays.",
+    "Prix et devise": "Volatilite matieres, energie, devise, paiement et clauses de couverture.",
+    "Resilience interne": "Maturite de pilotage, veille, gouvernance risque et capacite de reaction.",
+}
+
+
+MARKET_EXPOSURE_MAP = {
+    "Cuivre": ["HG.F", "USDCNY", "EURUSD"],
+    "Aluminium": ["CL.F", "USDCNY", "EURUSD"],
+    "Acier": ["CL.F", "USDCNY", "EURUSD"],
+    "Semi-conducteurs": ["USDCNY", "EURUSD", "HG.F"],
+    "RAM": ["USDCNY", "EURUSD", "HG.F"],
+    "PCB": ["USDCNY", "EURUSD", "HG.F"],
+    "Terres rares": ["USDCNY", "EURUSD"],
+    "Lithium": ["USDCNY", "EURUSD"],
+    "Cobalt": ["USDCNY", "EURUSD"],
+    "Nickel": ["USDCNY", "EURUSD"],
+    "Engrais NPK": ["CL.F", "ZW.F", "EURUSD"],
+    "Soja": ["ZW.F", "EURUSD"],
+    "Ble dur": ["ZW.F", "EURUSD"],
+    "Energie": ["CL.F", "EURUSD"],
+    "Coton": ["EURUSD", "USDCNY"],
+    "Polyester": ["CL.F", "USDCNY"],
+}
+
+
+SECTOR_MARKET_MAP = {
+    "Electronique": ["USDCNY", "EURUSD", "HG.F"],
+    "Automobile": ["USDCNY", "EURUSD", "CL.F", "HG.F"],
+    "Agroalimentaire": ["ZW.F", "CL.F", "EURUSD"],
+    "Industrie manufacturiere": ["HG.F", "CL.F", "EURUSD"],
+    "Construction": ["HG.F", "CL.F", "EURUSD"],
+    "Textile": ["EURUSD", "USDCNY", "CL.F"],
+}
+
+
+def relevant_market_symbols(payload):
+    symbols = set()
+    for material in payload.get("materials", []):
+        symbols.update(MARKET_EXPOSURE_MAP.get(material, []))
+    symbols.update(SECTOR_MARKET_MAP.get(payload.get("sector", ""), []))
+    trade_profile = payload.get("trade_profile", "")
+    if "Exportateur" in trade_profile or "exportateur" in trade_profile:
+        symbols.update(["EURUSD", "USDCNY"])
+    if "Importateur" in trade_profile or "importateur" in trade_profile:
+        symbols.update(["EURUSD", "USDCNY"])
+    return symbols
+
+
+def contextual_market_pressure(base_pressure, payload, result, quotes):
+    relevant_symbols = relevant_market_symbols(payload)
+    relevant_quotes = [quote for quote in quotes if quote["symbol"].upper() in relevant_symbols]
+    quote_pressure = sum(min(abs(quote.get("change_pct", 0)) * 8, 16) for quote in relevant_quotes)
+    risk_pressure = result.dimensions["Prix et devise"] * 0.14 + result.dimensions["Reglementaire"] * 0.10
+    return min(100, int(round(base_pressure * 0.45 + quote_pressure + risk_pressure)))
+
+
+def market_context_sentence(payload, result, relevant_quotes, contextual_pressure):
+    materials = ", ".join(payload.get("materials", []))
+    leader = max(result.dimensions.items(), key=lambda item: item[1])
+    if relevant_quotes:
+        move = max(relevant_quotes, key=lambda quote: abs(quote.get("change_pct", 0)))
+        market_part = f"Le signal marche le plus sensible pour ce scenario est {move['label']} ({move['change_pct']:+.2f}%)."
+    else:
+        market_part = "Aucun signal de prix public directement relie aux flux selectionnes n'est disponible dans la veille actuelle."
+    return (
+        f"Contexte actif: {payload.get('trade_profile', 'Profil international')} | {payload.get('sector', 'Secteur')} | {materials}. "
+        f"Pression contextualisee: {contextual_pressure}/100. {market_part} "
+        f"La dimension dominante reste {leader[0].lower()} ({leader[1]}/100), ce qui oriente la lecture du score, du radar, de la matrice et des actions."
+    )
+
+
+def dimension_detail_chart(result, key):
+    dimensions = list(result.dimensions.keys())
+    values = [result.dimensions[name] for name in dimensions]
+    fig = go.Figure(
+        go.Bar(
+            x=values,
+            y=dimensions,
+            orientation="h",
+            marker_color=[stat_color(value) for value in values],
+            hovertemplate="%{y}: %{x}/100<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        height=285,
+        paper_bgcolor="#111827",
+        plot_bgcolor="#111827",
+        font=dict(color="#f8fafc"),
+        xaxis=dict(range=[0, 100], gridcolor="rgba(255,255,255,.09)"),
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=20, r=20, t=10, b=20),
+    )
+    st.plotly_chart(fig, key=key, config={"displayModeBar": False, "responsive": True})
+
+
+def score_gauge(result, key):
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number+delta",
+            value=result.global_score,
+            number={"suffix": "/100"},
+            delta={"reference": result.target_score, "relative": False, "valueformat": ".0f"},
+            gauge={
+                "axis": {"range": [0, 100]},
+                "bar": {"color": level_color(result.global_score)},
+                "steps": [
+                    {"range": [0, 35], "color": "rgba(34,197,94,.25)"},
+                    {"range": [35, 55], "color": "rgba(245,185,66,.22)"},
+                    {"range": [55, 75], "color": "rgba(249,115,22,.22)"},
+                    {"range": [75, 100], "color": "rgba(239,68,68,.25)"},
+                ],
+                "threshold": {"line": {"color": "#22c55e", "width": 4}, "value": result.target_score},
+            },
+        )
+    )
+    fig.update_layout(
+        height=270,
+        paper_bgcolor="#111827",
+        font=dict(color="#f8fafc"),
+        margin=dict(l=20, r=20, t=20, b=15),
+    )
+    st.plotly_chart(fig, key=key, config={"displayModeBar": False, "responsive": True})
+
+
+def render_decision_scorecard(payload, result):
+    st.markdown(
+        f"""
+        <div class="summary-box">
+            <b>Lecture decisionnelle.</b> {esc(result.executive_summary)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="context-band">
+            <span class="pill">{esc(payload.get('trade_profile', 'Profil international'))}</span>
+            <span class="pill">{esc(payload.get('sector', 'Secteur'))}</span>
+            <span class="pill">{esc(', '.join(payload.get('materials', [])))}</span>
+            <span class="pill">Niveau {esc(result.level)}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left, right = st.columns([.95, 1.2])
+    with left:
+        score_gauge(result, key="active_score_gauge")
+    with right:
+        render_metrics(result)
+        st.markdown(
+            f"""
+            <div class="decision-grid">
+                <div class="decision-tile"><div class="metric-label">Decision</div><strong>{esc(result.level)}</strong><div class="small-muted">Priorite de pilotage du scenario actif.</div></div>
+                <div class="decision-tile"><div class="metric-label">Reduction possible</div><strong>{result.score_reduction} pts</strong><div class="small-muted">Ecart entre score actuel et score cible.</div></div>
+                <div class="decision-tile"><div class="metric-label">Cout residuel</div><strong>{esc(money(result.residual_cost))}</strong><div class="small-muted">Apres actions prioritaires.</div></div>
+                <div class="decision-tile"><div class="metric-label">Actions</div><strong>{len(result.mitigation)}</strong><div class="small-muted">Leviers proposes par le moteur.</div></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    detail_col, chart_col = st.columns([.9, 1.25])
+    with detail_col:
+        selected_dimension = st.selectbox(
+            "Dimension a analyser",
+            list(result.dimensions.keys()),
+            index=0,
+            key="active_dimension_focus",
+        )
+        st.metric(
+            selected_dimension,
+            f"{result.dimensions[selected_dimension]}/100",
+            help=DIMENSION_LABELS.get(selected_dimension, ""),
+        )
+        st.write(DIMENSION_LABELS.get(selected_dimension, ""))
+        matching_causes = [
+            cause for cause in result.root_causes
+            if selected_dimension.lower().split()[0] in cause["title"].lower()
+        ]
+        if result.root_causes:
+            cause = matching_causes[0] if matching_causes else result.root_causes[0]
+            st.info(f"Cause prioritaire: {cause['title']} - {cause['detail']}")
+    with chart_col:
+        dimension_detail_chart(result, key="active_dimension_bars")
+
+
 @st.cache_data(ttl=900, show_spinner="Chargement des taux BCE...")
 def cached_ecb_rates():
     return fetch_ecb_rates()
@@ -602,7 +819,7 @@ def quote_signal(change_pct):
     return "Stable"
 
 
-def render_market_brief(pressure, quotes, news, rates_payload):
+def render_market_brief(pressure, quotes, news, rates_payload, payload=None, result=None):
     top_moves = sorted(quotes, key=lambda quote: abs(quote.get("change_pct", 0)), reverse=True)[:3]
     eur_usd = (rates_payload.get("rates") or {}).get("USD")
     brief_parts = [
@@ -615,6 +832,10 @@ def render_market_brief(pressure, quotes, news, rates_payload):
         brief_parts.append(f"Mouvement principal: {leader['label']} {leader['change_pct']:+.2f}%.")
     if eur_usd:
         brief_parts.append(f"EUR/USD BCE: {eur_usd:.4f}.")
+    if payload and result:
+        relevant_quotes = [quote for quote in quotes if quote["symbol"].upper() in relevant_market_symbols(payload)]
+        contextual_pressure = contextual_market_pressure(pressure, payload, result, quotes)
+        brief_parts.append(market_context_sentence(payload, result, relevant_quotes, contextual_pressure))
 
     st.markdown(
         f"""
@@ -672,7 +893,52 @@ def render_market_segments(quotes, rates_payload):
         st.info("Les niveaux d'alerte seront calcules des que les cotations publiques seront disponibles.")
 
 
-def render_market_dashboard():
+def render_market_alignment(payload, result, quotes, news, pressure):
+    relevant_symbols = relevant_market_symbols(payload)
+    relevant_quotes = [quote for quote in quotes if quote["symbol"].upper() in relevant_symbols]
+    contextual_pressure = contextual_market_pressure(pressure, payload, result, quotes)
+    top_dimension = max(result.dimensions.items(), key=lambda item: item[1])
+    top_action = result.mitigation[0] if result.mitigation else None
+
+    st.markdown("#### Alignement scenario actif")
+    st.caption("Cette lecture relie les signaux publics au profil entreprise, puis aux vues Score, Radar, Matrice et Mitigation.")
+    st.markdown(
+        f"""
+        <div class="decision-grid">
+            <div class="decision-tile"><div class="metric-label">Score</div><strong>{result.global_score}/100</strong><div class="small-muted">Pression marche contextualisee: {contextual_pressure}/100.</div></div>
+            <div class="decision-tile"><div class="metric-label">Radar</div><strong>{esc(top_dimension[0])}</strong><div class="small-muted">Dimension dominante: {top_dimension[1]}/100.</div></div>
+            <div class="decision-tile"><div class="metric-label">Matrice</div><strong>P{result.probability} / I{result.impact}</strong><div class="small-muted">Position du scenario actif.</div></div>
+            <div class="decision-tile"><div class="metric-label">Mitigation</div><strong>{esc(top_action['title'] if top_action else 'A definir')}</strong><div class="small-muted">{esc(top_action['horizon'] if top_action else 'Aucune action prioritaire')}</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if relevant_quotes:
+        rows = [{
+            "Signal pertinent": quote["label"],
+            "Type": quote["type"],
+            "Variation": f"{quote['change_pct']:+.2f}%",
+            "Lien scenario": "Flux critique / devise / secteur",
+        } for quote in relevant_quotes]
+        st.dataframe(rows, width="stretch", hide_index=True)
+    else:
+        st.info("Aucun indicateur public de la watchlist ne correspond directement aux flux du scenario actif.")
+
+    if news:
+        keywords = [payload.get("sector", ""), payload.get("trade_profile", "")] + payload.get("materials", [])
+        filtered_news = [
+            article for article in news
+            if any(keyword and keyword.lower().split()[0] in article["title"].lower() for keyword in keywords)
+        ][:3]
+        if filtered_news:
+            st.markdown("#### Alertes les plus proches du contexte")
+            for article in filtered_news:
+                st.write(f"**{article['title']}**")
+                st.caption(f"{article['domain']} | {article['date']}")
+
+
+def render_market_dashboard(payload, result):
     col_title, col_action = st.columns([1, .25])
     with col_title:
         st.markdown("### Dashboard marche public")
@@ -718,7 +984,8 @@ def render_market_dashboard():
             for error in quote_errors:
                 st.write(f"{error['symbol']}: {error['error']}")
 
-    render_market_brief(pressure, quotes, news, rates_payload)
+    render_market_brief(pressure, quotes, news, rates_payload, payload, result)
+    render_market_alignment(payload, result, quotes, news, pressure)
     render_market_segments(quotes, rates_payload)
 
     st.markdown("#### Prix, devises et matieres")
@@ -789,6 +1056,19 @@ def render_market_dashboard():
         "- [Stooq - cotations publiques](https://stooq.com)\n"
         "- [GDELT Project - actualites mondiales](https://www.gdeltproject.org)\n"
         "- [Google News RSS - relais public si GDELT est lent](https://news.google.com)"
+    )
+
+
+def render_context_banner(payload, result, label):
+    st.markdown(
+        f"""
+        <div class="summary-box">
+            <b>{esc(label)}.</b> Scenario actif: {esc(payload.get('scenario_name', 'Scenario'))} ·
+            {esc(payload.get('trade_profile', 'Profil international'))} · {esc(payload.get('sector', 'Secteur'))}.
+            Score {result.global_score}/100, probabilite {result.probability}/100, impact {result.impact}/100.
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 
@@ -993,19 +1273,7 @@ def main():
 
     st.divider()
     st.markdown("### Carte de score du scenario actif")
-    c1, c2 = st.columns([.9, 1.3])
-    with c1:
-        render_player_card(edited_payload["scenario_name"], preview_result)
-    with c2:
-        st.markdown(
-            f"""
-            <div class="summary-box">
-                <b>Synthese.</b> {esc(preview_result.executive_summary)}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        render_metrics(preview_result)
+    render_decision_scorecard(edited_payload, preview_result)
 
     st.divider()
     selected_names = st.multiselect(
@@ -1021,9 +1289,10 @@ def main():
     )
 
     with tab_market:
-        render_market_dashboard()
+        render_market_dashboard(edited_payload, preview_result)
 
     with tab_score:
+        render_context_banner(edited_payload, preview_result, "Lecture score")
         st.markdown("### Comparaison des scenarios")
         cols = st.columns(min(3, len(selected_names)))
         for idx, name in enumerate(selected_names):
@@ -1033,14 +1302,17 @@ def main():
         comparison_table(saved_results, selected_names)
 
     with tab_radar:
+        render_context_banner(edited_payload, preview_result, "Lecture radar")
         st.markdown("### Radar des indicateurs risque")
         radar_chart(saved_results, selected_names, key="radar_compare")
 
     with tab_matrix:
+        render_context_banner(edited_payload, preview_result, "Lecture matrice")
         st.markdown("### Matrice probabilite / impact")
         matrix_chart(saved_results, selected_names, key="matrix_compare")
 
     with tab_actions:
+        render_context_banner(edited_payload, preview_result, "Lecture mitigation")
         st.markdown("### Pourquoi ce scenario est risque")
         render_causes(preview_result)
         st.markdown("### Actions recommandees")
